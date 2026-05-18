@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Aide Déclaration d'Impôts France 2025
 
-## Getting Started
+Assistant web complet pour préparer votre déclaration de revenus 2025 (revenus 2024).
+Génère un PDF récapitulatif avec toutes vos cases et justificatifs à conserver.
 
-First, run the development server:
+## Fonctionnalités
+
+- 13 modules couvrant l'intégralité de la déclaration 2042 et annexes
+- Calcul automatique : quotient familial, déficit foncier, frais réels vs forfait
+- Simulation d'impôt en temps réel (barème 2024)
+- PDF téléchargeable avec cases, montants et justificatifs
+- 100% local — zéro donnée envoyée à un serveur
+- Sauvegarde automatique dans localStorage
+
+## Déploiement Vercel (3 commandes)
 
 ```bash
+# 1. Installer les dépendances
+npm install
+
+# 2. Tester en local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+
+# 3. Déployer sur Vercel
+npx vercel --prod
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Ou via l'interface Vercel : connectez votre dépôt GitHub, Vercel détecte automatiquement Next.js.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Stack
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Next.js 15 (App Router)
+- Tailwind CSS v4
+- @react-pdf/renderer (génération PDF côté client)
+- React useReducer (état global)
+- localStorage (persistance)
+- Zéro backend, zéro base de données
 
-## Learn More
+## Modules couverts
 
-To learn more about Next.js, take a look at the following resources:
+| # | Module | Cases |
+|---|--------|-------|
+| 0 | Profil & activation | — |
+| 1 | Situation personnelle & parts | 1AJ, 1BJ, T, P, W, G |
+| 2 | Revenus salariaux | 1AJ, 1BJ, 1AK, 1BK, 1GH |
+| 3 | Retraites & allocations | 1AS, 1BS, 1AP, 1AZ |
+| 4 | Activité indépendante | 5KO, 5KP, 5HQ, 5QC, 1GB |
+| 5 | Location nue | 4BA, 4BC, 4BD, 4BE + détail 2044 |
+| 6 | Location meublée (LMNP) | 5ND, 5NA |
+| 7 | SCI à l'IR | 4BA, 4BC |
+| 8 | Patrimoine financier | 2TR, 2DC, 3VG, 3VH, 2CH |
+| 9 | Charges déductibles | 6EL, 6GU, 6NS |
+| 10 | Réductions & crédits | 7UF, 7UD, 7DB, 7GA, 7EA... |
+| 11 | IFI | 9HI, 9HJ, 9HM |
+| 12 | Récapitulatif + PDF | — |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Avertissement légal
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Outil indicatif uniquement — voir [DISCLAIMER.md](DISCLAIMER.md).
+Vérifiez toujours sur **impots.gouv.fr** avant de soumettre votre déclaration.
