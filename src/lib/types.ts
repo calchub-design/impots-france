@@ -1,6 +1,8 @@
 // ============================================================
-// Types centraux pour la déclaration d'impôts 2024 (revenus 2024)
+// Types centraux — déclaration d'impôts (multi-année)
 // ============================================================
+
+export type AnneeDeclaration = 2025 | 2026;
 
 export type SituationMaritale = 'celibataire' | 'marie_pacse' | 'divorce' | 'veuf';
 export type RegimeFoncier = 'micro' | 'reel' | null;
@@ -222,6 +224,7 @@ export interface IFI {
 // ---- État global ----
 export interface TaxState {
   currentStep: number;
+  anneeDeclaration: AnneeDeclaration;
   modules: ModuleActivation;
   situationPersonnelle: SituationPersonnelle;
   revenusSalariaux: RevenusSalariaux;
