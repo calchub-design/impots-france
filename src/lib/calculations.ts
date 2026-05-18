@@ -1,4 +1,4 @@
-import { TaxState, TaxCalculation, FoncierCalc, CaseFiscale, AnneeDeclaration } from './types';
+import { TaxState, TaxCalculation, FoncierCalc, CaseFiscale } from './types';
 
 // ── Paramètres fiscaux par année de déclaration ─────────────
 interface ParamsFiscaux {
@@ -22,8 +22,8 @@ interface ParamsFiscaux {
 }
 
 // Déclaration 2026 — Revenus 2025
-// Source : loi de finances 2026, JO du 19 février 2026 + service-public.gouv.fr
-export const PARAMS_2026: ParamsFiscaux = {
+// Source : loi de finances 2026, JO du 19 février 2026
+const PARAMS: ParamsFiscaux = {
   tranches: [
     [11600,  0.00, 0],
     [29579,  0.11, 0],
@@ -42,32 +42,7 @@ export const PARAMS_2026: ParamsFiscaux = {
   libelleDeclaration: 'Déclaration 2026 — Revenus 2025',
 };
 
-// Déclaration 2025 — Revenus 2024
-// Source : loi de finances 2025
-export const PARAMS_2025: ParamsFiscaux = {
-  tranches: [
-    [11294,  0.00, 0],
-    [28797,  0.11, 0],
-    [82341,  0.30, 17503 * 0.11],
-    [177106, 0.41, 17503 * 0.11 + 53544 * 0.30],
-    [Infinity, 0.45, 17503 * 0.11 + 53544 * 0.30 + 94765 * 0.41],
-  ],
-  plafondDemiPart: 1759,
-  decoteCelibataire: [1929, 873],
-  decoteCouple: [3191, 1444],
-  plafondFraisPro: 14426,
-  plafondAbattRetraite: 4321,
-  plafondPER: 35194,
-  minPER: 4399,
-  anneeRevenus: 2024,
-  libelleDeclaration: 'Déclaration 2025 — Revenus 2024',
-};
-
-export function getParams(annee: AnneeDeclaration): ParamsFiscaux {
-  return annee === 2025 ? PARAMS_2025 : PARAMS_2026;
-}
-
-// ── Barème kilométrique (valable 2024 et 2025) ───────────────
+// ── Barème kilométrique (valable 2025) ───────────────────────
 const BAREME_KM: Record<string, Record<string, { jusqu5k: number; de5kA20k: [number, number]; plus20k: number }>> = {
   voiture: {
     '3cv':     { jusqu5k: 0.529, de5kA20k: [0.316, 1065], plus20k: 0.370 },
@@ -94,15 +69,15 @@ export function calculerFraisReels(state: TaxState, qui: 'declarant' | 'conjoint
   return km + d.fraisReels.repas + d.fraisReels.formation + d.fraisReels.doubleResidence + d.fraisReels.autresFrais;
 }
 
-export function calculerFraisForfait(salaire: number, annee: AnneeDeclaration = 2026): number {
-  return Math.min(salaire * 0.10, getParams(annee).plafondFraisPro);
+export function calculerFraisForfait(salaire: number): number {
+  return Math.min(salaire * 0.10, PARAMS.plafondFraisPro);
 }
 
 export function choisirFraisPro(state: TaxState, qui: 'declarant' | 'conjoint'): { montant: number; type: string } {
   const d = state.revenusSalariaux[qui];
   const salaireBrut = d.salaires + d.avantagesNature;
   if (d.fraisPro === 'forfait') {
-    return { montant: calculerFraisForfait(salaireBrut, state.anneeDeclaration), type: 'forfait' };
+    return { montant: calculerFraisForfait(salaireBrut), type: 'forfait' };
   }
   const reels = calculerFraisReels(state, qui);
   return { montant: reels, type: 'reel' };
@@ -240,9 +215,9 @@ export function calculerFoncier(state: TaxState): FoncierCalc {
   };
 }
 
-// ── Barème IR (paramétré par année) ─────────────────────────
-export function calculerImpotBrut(revenuParPart: number, annee: AnneeDeclaration = 2026): number {
-  const { tranches } = getParams(annee);
+// ── Barème IR ────────────────────────────────────────────────
+export function calculerImpotBrut(revenuParPart: number): number {
+  const { tranches } = PARAMS;
   let prev = 0;
   for (const [seuil, taux, base] of tranches) {
     if (revenuParPart <= seuil) {
@@ -253,10 +228,10 @@ export function calculerImpotBrut(revenuParPart: number, annee: AnneeDeclaration
   return 0;
 }
 
-function plafonnementQF(impotSansParts: number, impotAvecParts: number, parts: number, estCouple: boolean, annee: AnneeDeclaration): number {
+function plafonnementQF(impotSansParts: number, impotAvecParts: number, parts: number, estCouple: boolean): number {
   const partsBase = estCouple ? 2 : 1;
   const demisPartsSupp = (parts - partsBase) * 2;
-  const gainMax = demisPartsSupp * getParams(annee).plafondDemiPart;
+  const gainMax = demisPartsSupp * PARAMS.plafondDemiPart;
   const gainReel = impotSansParts - impotAvecParts;
   if (gainReel > gainMax) return impotSansParts - gainMax;
   return impotAvecParts;
@@ -272,8 +247,7 @@ function fractionRenteViagere(age: number): number {
 
 // ── Calcul complet ──────────────────────────────────────────
 export function calculerImpot(state: TaxState): TaxCalculation {
-  const annee = state.anneeDeclaration ?? 2026;
-  const params = getParams(annee);
+  const params = PARAMS;
   const parts = calculerParts(state);
   const estCouple = state.situationPersonnelle.situationMaritale === 'marie_pacse';
 
@@ -370,12 +344,12 @@ export function calculerImpot(state: TaxState): TaxCalculation {
   // --- Calcul IR ---
   const partsBase = estCouple ? 2 : 1;
   const quotientBase = revenuNetGlobal / partsBase;
-  const impotSansParts = calculerImpotBrut(quotientBase, annee) * partsBase;
+  const impotSansParts = calculerImpotBrut(quotientBase) * partsBase;
 
   const quotientTotal = revenuNetGlobal / parts;
-  const impotAvecParts = calculerImpotBrut(quotientTotal, annee) * parts;
+  const impotAvecParts = calculerImpotBrut(quotientTotal) * parts;
 
-  const impotApresQFBrut = plafonnementQF(impotSansParts, impotAvecParts, parts, estCouple, annee);
+  const impotApresQFBrut = plafonnementQF(impotSansParts, impotAvecParts, parts, estCouple);
 
   const [seuilDecoteCel, montDecoteCel] = params.decoteCelibataire;
   const [seuilDecoteCouple, montDecoteCouple] = params.decoteCouple;
@@ -562,6 +536,5 @@ export function genererCases(state: TaxState, calc: TaxCalculation): CaseFiscale
 export function calculerPlafondPER(state: TaxState): number {
   const salD = state.revenusSalariaux.declarant.salaires;
   const salC = state.revenusSalariaux.conjoint.salaires;
-  const { plafondPER, minPER } = getParams(state.anneeDeclaration ?? 2026);
-  return Math.max(Math.min((salD + salC) * 0.10, plafondPER), minPER);
+  return Math.max(Math.min((salD + salC) * 0.10, PARAMS.plafondPER), PARAMS.minPER);
 }

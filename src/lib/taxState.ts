@@ -2,7 +2,6 @@ import { TaxState } from './types';
 
 export const initialState: TaxState = {
   currentStep: 0,
-  anneeDeclaration: 2026,
   modules: {
     salaires: false,
     retraite: false,

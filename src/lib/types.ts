@@ -1,8 +1,6 @@
 // ============================================================
-// Types centraux — déclaration d'impôts (multi-année)
+// Types centraux — déclaration d'impôts
 // ============================================================
-
-export type AnneeDeclaration = 2025 | 2026;
 
 export type SituationMaritale = 'celibataire' | 'marie_pacse' | 'divorce' | 'veuf';
 export type RegimeFoncier = 'micro' | 'reel' | null;
@@ -224,7 +222,6 @@ export interface IFI {
 // ---- État global ----
 export interface TaxState {
   currentStep: number;
-  anneeDeclaration: AnneeDeclaration;
   modules: ModuleActivation;
   situationPersonnelle: SituationPersonnelle;
   revenusSalariaux: RevenusSalariaux;

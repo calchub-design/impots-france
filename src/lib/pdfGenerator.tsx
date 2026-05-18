@@ -65,8 +65,8 @@ export async function generateTaxPDF(state: TaxState): Promise<void> {
       <Page size="A4" style={styles.page}>
         {/* En-tête */}
         <View style={styles.header}>
-          <Text style={styles.title}>Aide à la déclaration de revenus {state.anneeDeclaration ?? 2026}</Text>
-          <Text style={styles.subtitle}>Revenus {(state.anneeDeclaration ?? 2026) - 1} — Généré le {new Date().toLocaleDateString('fr-FR')}</Text>
+          <Text style={styles.title}>Aide à la déclaration de revenus {2026}</Text>
+          <Text style={styles.subtitle}>Revenus {(2026) - 1} — Généré le {new Date().toLocaleDateString('fr-FR')}</Text>
         </View>
 
         {/* Disclaimer */}
@@ -241,7 +241,7 @@ export async function generateTaxPDF(state: TaxState): Promise<void> {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `declaration-impots-revenus-${(state.anneeDeclaration ?? 2026) - 1}-${new Date().toISOString().slice(0, 10)}.pdf`;
+  a.download = `declaration-impots-revenus-${(2026) - 1}-${new Date().toISOString().slice(0, 10)}.pdf`;
   a.click();
   URL.revokeObjectURL(url);
 }

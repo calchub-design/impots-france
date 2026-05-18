@@ -76,7 +76,7 @@ function PersonBlock({ qui, label, state, dispatch }: {
 
       {d.fraisPro === 'reel' && (
         <div className="mt-4 space-y-4 border-l-4 border-blue-200 pl-4">
-          <p className="text-sm text-gray-600 font-medium">Détail des frais réels 2024</p>
+          <p className="text-sm text-gray-600 font-medium">Détail des frais réels 2025</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium text-gray-700">Kilomètres domicile-travail</label>

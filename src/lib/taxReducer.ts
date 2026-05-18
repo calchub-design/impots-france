@@ -1,9 +1,8 @@
-import { TaxState, AnneeDeclaration } from './types';
+import { TaxState } from './types';
 import { initialState } from './taxState';
 
 export type TaxAction =
   | { type: 'SET_STEP'; payload: number }
-  | { type: 'SET_ANNEE'; payload: AnneeDeclaration }
   | { type: 'UPDATE_MODULES'; payload: Partial<TaxState['modules']> }
   | { type: 'UPDATE_SITUATION'; payload: Partial<TaxState['situationPersonnelle']> }
   | { type: 'UPDATE_SALAIRES'; payload: Partial<TaxState['revenusSalariaux']> }
@@ -23,9 +22,6 @@ export function taxReducer(state: TaxState, action: TaxAction): TaxState {
   switch (action.type) {
     case 'SET_STEP':
       return { ...state, currentStep: action.payload };
-
-    case 'SET_ANNEE':
-      return { ...state, anneeDeclaration: action.payload };
 
     case 'UPDATE_MODULES':
       return { ...state, modules: { ...state.modules, ...action.payload } };
