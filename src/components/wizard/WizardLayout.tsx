@@ -5,6 +5,7 @@ import { initialState } from '@/lib/taxState';
 import { TaxState } from '@/lib/types';
 import { ProgressBar } from './ProgressBar';
 import { SidePanel } from './SidePanel';
+import { TipsPanel } from './TipsPanel';
 import { StepNavigation } from './StepNavigation';
 import { Module0Profile } from '@/components/modules/Module0Profile';
 import { Module1Situation } from '@/components/modules/Module1Situation';
@@ -222,11 +223,13 @@ export function WizardLayout() {
           </div>
 
           {/* Panneau latéral (desktop uniquement) */}
-          <div className="hidden lg:block">
+          <div className="hidden lg:block space-y-4">
             <SidePanel state={state} />
 
+            <TipsPanel state={state} />
+
             {/* Info PDF */}
-            <div className="mt-4 bg-white rounded-2xl border border-gray-200 p-4 text-sm text-gray-600 shadow-sm">
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 text-sm text-gray-600 shadow-sm">
               <p className="font-medium text-gray-800 mb-2 flex items-center gap-2">
                 <span>📄</span> PDF récapitulatif
               </p>
