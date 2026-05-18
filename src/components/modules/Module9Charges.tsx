@@ -46,7 +46,7 @@ export function Module9Charges({ state, dispatch }: Props) {
       <SectionCard title="Épargne retraite (PER, PERP, Madelin)" icon="🏦">
         <AlertBox variant="info">
           Plafond estimé de déduction disponible : <strong>{plafondPER.toLocaleString('fr-FR')} €</strong>
-          {' '}(10% des revenus N-1 plafonnés à 35 816 €, minimum 4 478 €).
+          {' '}(10% des revenus professionnels 2025 plafonnés à 37 680 €, minimum 4 710 €).
           {totalPER > plafondPER && (
             <span className="text-red-600"> ⚠️ Vos versements ({totalPER.toLocaleString('fr-FR')} €) dépassent le plafond.</span>
           )}

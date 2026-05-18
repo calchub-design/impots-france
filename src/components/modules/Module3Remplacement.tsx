@@ -51,7 +51,7 @@ function PersonBlock({ qui, label, state, dispatch }: {
           label="Pensions de retraite (case 1AS)"
           value={d.retraite}
           onChange={v => update({ retraite: v })}
-          tooltip="Pension de base (Sécurité Sociale), complémentaires (ARRCO, AGIRC), pension de réversion... Un abattement de 10% est automatiquement appliqué, plafonné à 4 399€ par foyer."
+          tooltip="Pension de base (Sécurité Sociale), complémentaires (ARRCO, AGIRC), pension de réversion... Un abattement de 10% est automatiquement appliqué, plafonné à 4 439€ par foyer."
         />
         <CurrencyInput
           label="Pensions d'invalidité (case 1AZ)"
@@ -69,7 +69,7 @@ function PersonBlock({ qui, label, state, dispatch }: {
 
       {d.retraite > 0 && (
         <AlertBox variant="success">
-          Abattement retraite calculé : <strong>{abattRetraite.toLocaleString('fr-FR')} €</strong> (10% de {d.retraite.toLocaleString('fr-FR')} €, plafonné à 4 399 €/foyer)
+          Abattement retraite calculé : <strong>{abattRetraite.toLocaleString('fr-FR')} €</strong> (10% de {d.retraite.toLocaleString('fr-FR')} €, plafonné à 4 439 €/foyer)
         </AlertBox>
       )}
 
