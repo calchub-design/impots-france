@@ -19,7 +19,7 @@ const JUSTIFICATIFS_REQUIS = [
   'Bulletins de salaire / AER employeur',
   'Tableau d\'amortissement du prêt + attestation fiscale banque',
   'Relevé annuel du syndic de copropriété',
-  'Avis de taxe foncière 2024',
+  'Avis de taxe foncière 2025',
   'Attestations assurance PNO et GLI',
   'Attestation assurance emprunt (ADI)',
   'Relevé de gérance agence (si applicable)',
@@ -103,7 +103,7 @@ export function Module12Summary({ state, onGeneratePDF }: Props) {
       {/* Simulation impôt */}
       <div className="rounded-xl border-2 border-blue-200 overflow-hidden mb-6">
         <div className="bg-blue-700 text-white px-4 py-3 font-semibold text-sm flex items-center gap-2">
-          <span>🧮</span> Simulation de l'impôt 2024
+          <span>🧮</span> Simulation de l'impôt 2025
         </div>
         <div className="p-4 space-y-2">
           {lignesImpot.map((l, i) => l.value !== null ? (

@@ -21,7 +21,7 @@ import { Module11IFI } from '@/components/modules/Module11IFI';
 import { Module12Summary } from '@/components/modules/Module12Summary';
 import { RotateCcw, Save } from 'lucide-react';
 
-const STORAGE_KEY = 'impots-fr-2024-state';
+const STORAGE_KEY = 'impots-fr-2025-state';
 
 interface WizardStep {
   id: number;
@@ -153,8 +153,8 @@ export function WizardLayout() {
           <div className="flex items-center gap-3">
             <span className="text-2xl">🇫🇷</span>
             <div>
-              <h1 className="font-bold text-base leading-tight">Aide Déclaration d'Impôts 2025</h1>
-              <p className="text-blue-300 text-xs">Revenus 2024 — Données 100% locales</p>
+              <h1 className="font-bold text-base leading-tight">Aide Déclaration d'Impôts 2026</h1>
+              <p className="text-blue-300 text-xs">Revenus 2025 — Données 100% locales</p>
             </div>
           </div>
           <div className="flex items-center gap-3">

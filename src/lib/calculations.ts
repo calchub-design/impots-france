@@ -28,7 +28,7 @@ export function calculerFraisReels(state: TaxState, qui: 'declarant' | 'conjoint
 }
 
 export function calculerFraisForfait(salaire: number): number {
-  return Math.min(salaire * 0.10, 14426);
+  return Math.min(salaire * 0.10, 14696);
 }
 
 export function choisirFraisPro(state: TaxState, qui: 'declarant' | 'conjoint'): { montant: number; type: string } {
@@ -70,7 +70,7 @@ export function calculerParts(state: TaxState): number {
   if (sp.invalide) parts += 0.5;
   // Ancien combattant (+0.5 si >75 ans)
   if (sp.ancienCombattant) {
-    const age = 2024 - parseInt(sp.anneeNaissanceDeclarant || '1950');
+    const age = 2025 - parseInt(sp.anneeNaissanceDeclarant || '1950');
     if (age >= 75) parts += 0.5;
   }
   // Invalide conjoint
@@ -173,21 +173,24 @@ export function calculerFoncier(state: TaxState): FoncierCalc {
   };
 }
 
-// ── Barème IR 2024 ──────────────────────────────────────────
+// ── Barème IR 2025 (revenus 2025, déclaration 2026) ─────────
+// ⚠️ À VÉRIFIER sur impots.gouv.fr — valeurs estimées par indexation ~1,8%
+// depuis le barème 2024. Mettre à jour dès publication loi de finances 2026.
 export function calculerImpotBrut(revenuParPart: number): number {
   let impot = 0;
-  if (revenuParPart <= 11294) return 0;
-  if (revenuParPart <= 28797) impot = (revenuParPart - 11294) * 0.11;
-  else if (revenuParPart <= 82341) impot = 17503 * 0.11 + (revenuParPart - 28797) * 0.30;
-  else if (revenuParPart <= 177106) impot = 17503 * 0.11 + 53544 * 0.30 + (revenuParPart - 82341) * 0.41;
-  else impot = 17503 * 0.11 + 53544 * 0.30 + 94765 * 0.41 + (revenuParPart - 177106) * 0.45;
+  if (revenuParPart <= 11497) return 0;
+  if (revenuParPart <= 29315) impot = (revenuParPart - 11497) * 0.11;
+  else if (revenuParPart <= 83823) impot = 17818 * 0.11 + (revenuParPart - 29315) * 0.30;
+  else if (revenuParPart <= 180294) impot = 17818 * 0.11 + 54508 * 0.30 + (revenuParPart - 83823) * 0.41;
+  else impot = 17818 * 0.11 + 54508 * 0.30 + 96471 * 0.41 + (revenuParPart - 180294) * 0.45;
   return impot;
 }
 
 function plafonnementQF(impotSansParts: number, impotAvecParts: number, parts: number, estCouple: boolean): number {
   const partsBase = estCouple ? 2 : 1;
   const demisPartsSupp = (parts - partsBase) * 2;
-  const gainMax = demisPartsSupp * 1759;
+  // ⚠️ Plafond par demi-part 2025 — à vérifier (1 791€ estimé, +1,8% vs 1 759€ en 2024)
+  const gainMax = demisPartsSupp * 1791;
   const gainReel = impotSansParts - impotAvecParts;
   if (gainReel > gainMax) return impotSansParts - gainMax;
   return impotAvecParts;
@@ -220,10 +223,10 @@ export function calculerImpot(state: TaxState): TaxCalculation {
   // --- Revenus de remplacement ---
   const repD = state.revenusRemplacement.declarant;
   const repC = state.revenusRemplacement.conjoint;
-  // Retraite : abattement 10% plafonné à 4321€/foyer
+  // Retraite : abattement 10% plafonné à 4478€/foyer
   const retraiteD = repD.retraite * 0.9;
   const retraiteC = repC.retraite * 0.9;
-  const abattRetraite = Math.min((repD.retraite + repC.retraite) * 0.1, 4321);
+  const abattRetraite = Math.min((repD.retraite + repC.retraite) * 0.1, 4478);
 
   const renteD = repD.renteViagere * fractionRenteViagere(repD.ageRenteViagere);
   const renteC = repC.renteViagere * fractionRenteViagere(repC.ageRenteViagere);
@@ -248,7 +251,7 @@ export function calculerImpot(state: TaxState): TaxCalculation {
   if (ind.reel.actif) revIndependant += ind.reel.resultatNet;
   if (ind.gerantSarl.actif) {
     const remun = ind.gerantSarl.remuneration;
-    if (ind.gerantSarl.fraisPro === 'forfait') revIndependant += Math.max(0, remun - Math.min(remun * 0.1, 14426));
+    if (ind.gerantSarl.fraisPro === 'forfait') revIndependant += Math.max(0, remun - Math.min(remun * 0.1, 14696));
     else revIndependant += remun;
   }
 
@@ -289,7 +292,7 @@ export function calculerImpot(state: TaxState): TaxCalculation {
   // --- Charges déductibles ---
   const ch = state.chargesDeductibles;
   const revN1 = salD + salC;
-  const plafondPER = Math.max(Math.min(revN1 * 0.10, 35194), 4399);
+  const plafondPER = Math.max(Math.min(revN1 * 0.10, 35816), 4478);
   const pensionAlim = ch.pensionEnfantMajeur + ch.pensionExConjoint + ch.pensionParents;
   const epargneRetraite = Math.min(ch.versementsPER + ch.versementsPERP + ch.versementsMadelin, plafondPER);
   const chargesDeductiblesTotal = pensionAlim + epargneRetraite + ch.csgDeductible + foncierCalc.case4BC;
@@ -307,12 +310,12 @@ export function calculerImpot(state: TaxState): TaxCalculation {
 
   const impotApresQFBrut = plafonnementQF(impotSansParts, impotAvecParts, parts, estCouple);
 
-  // Décote 2024
+  // Décote 2025 — ⚠️ seuils estimés (+1,8% vs 2024), à vérifier sur impots.gouv.fr
   let decote = 0;
-  if (!estCouple && impotApresQFBrut > 0 && impotApresQFBrut <= 1929) {
-    decote = Math.max(0, 873 - impotApresQFBrut * 0.4525);
-  } else if (estCouple && impotApresQFBrut > 0 && impotApresQFBrut <= 3191) {
-    decote = Math.max(0, 1444 - impotApresQFBrut * 0.4525);
+  if (!estCouple && impotApresQFBrut > 0 && impotApresQFBrut <= 1965) {
+    decote = Math.max(0, 889 - impotApresQFBrut * 0.4525);
+  } else if (estCouple && impotApresQFBrut > 0 && impotApresQFBrut <= 3249) {
+    decote = Math.max(0, 1470 - impotApresQFBrut * 0.4525);
   }
 
   const impotApresDecote = Math.max(0, impotApresQFBrut - decote);
@@ -491,5 +494,5 @@ export function genererCases(state: TaxState, calc: TaxCalculation): CaseFiscale
 export function calculerPlafondPER(state: TaxState): number {
   const salD = state.revenusSalariaux.declarant.salaires;
   const salC = state.revenusSalariaux.conjoint.salaires;
-  return Math.max(Math.min((salD + salC) * 0.10, 35194), 4399);
+  return Math.max(Math.min((salD + salC) * 0.10, 35816), 4478);
 }

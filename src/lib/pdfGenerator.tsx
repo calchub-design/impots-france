@@ -65,8 +65,8 @@ export async function generateTaxPDF(state: TaxState): Promise<void> {
       <Page size="A4" style={styles.page}>
         {/* En-tête */}
         <View style={styles.header}>
-          <Text style={styles.title}>Aide à la déclaration de revenus 2025</Text>
-          <Text style={styles.subtitle}>Revenus 2024 — Généré le {new Date().toLocaleDateString('fr-FR')}</Text>
+          <Text style={styles.title}>Aide à la déclaration de revenus 2026</Text>
+          <Text style={styles.subtitle}>Revenus 2025 — Généré le {new Date().toLocaleDateString('fr-FR')}</Text>
         </View>
 
         {/* Disclaimer */}
@@ -137,7 +137,7 @@ export async function generateTaxPDF(state: TaxState): Promise<void> {
       <Page size="A4" style={styles.page}>
         {/* Simulation */}
         <View style={styles.sectionTitle}>
-          <Text>SIMULATION DE L'IMPÔT 2024 (ESTIMATION)</Text>
+          <Text>SIMULATION DE L'IMPÔT 2025 (ESTIMATION)</Text>
         </View>
 
         {[
@@ -187,7 +187,7 @@ export async function generateTaxPDF(state: TaxState): Promise<void> {
               'Tableau d\'amortissement du prêt',
               'Attestation fiscale annuelle banque',
               'Relevé annuel du syndic',
-              'Avis de taxe foncière 2024',
+              'Avis de taxe foncière 2025',
               'Attestations assurance PNO et GLI',
               'Attestation assurance emprunt (ADI)',
               'Relevé de gérance agence (si applicable)',
@@ -241,7 +241,7 @@ export async function generateTaxPDF(state: TaxState): Promise<void> {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `declaration-impots-2024-${new Date().toISOString().slice(0, 10)}.pdf`;
+  a.download = `declaration-impots-2025-${new Date().toISOString().slice(0, 10)}.pdf`;
   a.click();
   URL.revokeObjectURL(url);
 }
