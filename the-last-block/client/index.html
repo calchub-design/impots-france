@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d1020" />
+    <meta name="description" content="The Last Block — minage coopératif mondial (prototype)." />
+    <title>The Last Block</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 29 10v13L16 30 3 23V10z' fill='%23f2c14e'/%3E%3Cpath d='M16 3 29 10 16 17 3 10z' fill='%23ffe08a'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo" aria-hidden="true"></span>
+          <div>
+            <h1>The Last Block</h1>
+            <div class="season-line"><span id="season-name">—</span> · <span id="countdown">—</span></div>
+          </div>
+        </div>
+        <div class="status" id="conn-status" data-state="connecting" title="État de la connexion">
+          <span class="dot"></span><span class="label">Connexion…</span>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="stage">
+          <div class="canvas-wrap">
+            <canvas id="scene" aria-label="Le cube commun et le panneau des meilleurs mineurs"></canvas>
+          </div>
+
+          <div class="hud">
+            <div class="hud-item"><span class="k">Couche</span><span class="v" id="hud-layer">—</span></div>
+            <div class="hud-item"><span class="k">Cube miné</span><span class="v" id="hud-progress">—</span></div>
+            <div class="hud-item"><span class="k">Mes coups</span><span class="v" id="hud-hits">0</span></div>
+            <div class="hud-item"><span class="k">Rang</span><span class="v" id="hud-rank">—</span></div>
+            <div class="hud-item"><span class="k">En ligne</span><span class="v" id="hud-online">—</span></div>
+          </div>
+
+          <div class="playtime">
+            <div class="playtime-label"><span>Temps actif aujourd'hui</span><span id="playtime-text">0 min / 4 h</span></div>
+            <div class="bar"><div class="fill" id="playtime-fill"></div></div>
+          </div>
+
+          <button id="mine-btn" class="mine-btn" type="button">
+            <span class="pick" aria-hidden="true">⛏</span>
+            <span>Miner</span>
+            <small id="mine-hint">Touchez un bloc ou maintenez ce bouton</small>
+          </button>
+        </section>
+
+        <section class="panel">
+          <nav class="tabs" role="tablist">
+            <button role="tab" data-tab="board" class="active">Classement</button>
+            <button role="tab" data-tab="brigade">Brigade</button>
+            <button role="tab" data-tab="seasons">Saisons</button>
+            <button role="tab" data-tab="profile">Profil</button>
+          </nav>
+
+          <div class="tab-body" data-body="board">
+            <h2>Meilleurs mineurs</h2>
+            <ol class="board" id="board-players"></ol>
+            <h2>Brigades</h2>
+            <ol class="board" id="board-brigades"></ol>
+            <p class="muted small">Seules les brigades d'au moins <span class="bmin">5</span> membres peuvent devenir championnes.</p>
+          </div>
+
+          <div class="tab-body hidden" data-body="brigade">
+            <div id="brigade-none">
+              <h2>Créer une brigade</h2>
+              <form id="brigade-create" class="row">
+                <input name="name" placeholder="Nom de la brigade" maxlength="24" minlength="3" required />
+                <button type="submit">Créer</button>
+              </form>
+              <h2>Rejoindre avec un code</h2>
+              <form id="brigade-join" class="row">
+                <input name="code" placeholder="CODE1234" maxlength="8" minlength="8" autocapitalize="characters" required />
+                <button type="submit">Rejoindre</button>
+              </form>
+              <p class="muted small">Brigades privées de <span class="bmin">5</span> à <span class="bmax">10</span> mineurs, sur invitation uniquement.</p>
+            </div>
+            <div id="brigade-mine" class="hidden">
+              <h2 id="brigade-name"></h2>
+              <p class="muted" id="brigade-status"></p>
+              <div class="invite">
+                <span>Code d'invitation</span>
+                <code id="brigade-code"></code>
+                <button type="button" id="brigade-copy">Copier</button>
+              </div>
+              <ol class="board" id="brigade-members"></ol>
+              <button type="button" class="danger" id="brigade-leave">Quitter la brigade</button>
+            </div>
+          </div>
+
+          <div class="tab-body hidden" data-body="seasons">
+            <h2>Saisons</h2>
+            <ul class="seasons" id="season-list"></ul>
+            <div id="season-detail"></div>
+          </div>
+
+          <div class="tab-body hidden" data-body="profile">
+            <h2>Profil</h2>
+            <form id="name-form" class="row">
+              <input name="name" id="name-input" placeholder="Pseudo" maxlength="20" minlength="2" required />
+              <button type="submit">Renommer</button>
+            </form>
+            <h2>Apparence <small class="muted">(cosmétique, gratuite)</small></h2>
+            <div class="skins" id="skins"></div>
+            <h2>Connexion</h2>
+            <p class="muted small">Vous jouez avec un <strong>compte invité</strong> lié à ce navigateur. La connexion Google / Apple est prévue mais <strong>pas encore disponible</strong>.</p>
+            <div class="row">
+              <button type="button" disabled>Google (bientôt)</button>
+              <button type="button" disabled>Apple (bientôt)</button>
+            </div>
+            <h2>Règles</h2>
+            <ul class="rules small">
+              <li>Un cube commun, miné couche par couche. Seule la couche du dessus est accessible.</li>
+              <li>Chaque coup retire 1 point de résistance ; les blocs profonds sont plus durs.</li>
+              <li>Maximum <span id="rule-rate">5</span> coups par seconde.</li>
+              <li>Maximum <span id="rule-daily">4 h</span> de minage <em>actif</em> par jour (l'inactivité n'est pas comptée).</li>
+              <li>Champion : meilleure contribution. Pierre finale : titre honorifique pour qui brise le dernier bloc.</li>
+              <li>Aucun avantage payant. Aucun gain d'argent.</li>
+            </ul>
+            <h2>Association</h2>
+            <p class="muted small" id="donation-note"></p>
+            <h2>Profil local</h2>
+            <p class="muted small">Pour tester plusieurs joueurs dans un même navigateur, ouvrez <code>?profil=bob</code>.</p>
+            <button type="button" class="danger" id="reset-profile">Oublier ce compte invité</button>
+          </div>
+        </section>
+      </main>
+
+      <div class="toasts" id="toasts" aria-live="polite"></div>
+      <dialog id="season-dialog">
+        <div id="season-dialog-body"></div>
+        <form method="dialog"><button>Fermer</button></form>
+      </dialog>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

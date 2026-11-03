@@ -1,0 +1,36 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DEFAULT_RULES, type GameRules } from '../server/config.js';
+import { SqliteStore } from '../server/db/sqlite.js';
+import { GameEngine } from '../server/game/engine.js';
+
+export class FakeClock {
+  constructor(public t = Date.UTC(2026, 0, 15, 10, 0, 0)) {}
+  now = () => this.t;
+  advance(ms: number) {
+    this.t += ms;
+  }
+}
+
+export function tempDbPath(): { path: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'tlb-test-'));
+  return { path: join(dir, 'test.sqlite'), cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+export function makeEngine(rules: Partial<GameRules> = {}, dbPath = ':memory:') {
+  const clock = new FakeClock();
+  const store = new SqliteStore(dbPath);
+  const engine = new GameEngine(store, { ...DEFAULT_RULES, autoStartSeason: false, ...rules }, { now: clock.now });
+  return { engine, store, clock };
+}
+
+let n = 0;
+export function aid(prefix = 'act'): string {
+  n++;
+  return `${prefix}-${n.toString().padStart(6, '0')}`;
+}
+
+export function newPlayer(engine: GameEngine, name?: string): string {
+  return engine.connectGuest(undefined, name).player.id;
+}

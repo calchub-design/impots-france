@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Prototype de jeu indépendant (outillage propre).
+    "the-last-block/**",
   ]),
 ]);
 
