@@ -32,6 +32,14 @@
 
 Node.js exécute ce traitement de façon synchrone : deux coups ne s'entrelacent jamais dans un même processus. La mise à jour conditionnelle et la contrainte d'unicité en base restent néanmoins les garanties finales (testées en simulant une destruction « externe »).
 
+## Client : surface navigable
+
+Le client affiche la face `top` (dessus de la couche courante) à travers une caméra 2.5D : `client/src/world/` contient la face, la caméra, les gestes, le rendu, la mini-carte, le panneau et la présence. Le rendu ne dessine que les blocs visibles et uniquement quand quelque chose change ; il n'applique jamais un coup avant la réponse du serveur. Détails, mesures et limites : [REFONTE.md](REFONTE.md).
+
+## Présence observée
+
+Le moteur garde en mémoire le dernier coup **accepté** de chaque joueur (`GameEngine.presence()`) et le diffuse avec le classement (≤ 1 fois/s, 40 entrées max, fenêtre de 20 s, `PRESENCE_WINDOW_MS`). Seuls les champs `playerId`, `name`, `skin`, `brigadeName`, `block` et `ageMs` sont envoyés ; aucune position de caméra ne circule. Un joueur peut masquer sa présence (`setPresence`, colonne `players.presence_hidden`, migration idempotente). Rien n'est persisté : après un redémarrage, la présence repart de zéro.
+
 ## Synchronisation client
 
 - `welcome` : état complet (saison, couche courante avec PV de chaque bloc, restants par couche, classements, temps actif, brigade) et numéro de séquence `seq`.

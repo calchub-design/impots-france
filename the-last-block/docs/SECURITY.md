@@ -36,6 +36,10 @@ Aucun audit de sécurité externe n'a été réalisé. Un audit ciblé interne (
 - Liste blanche d'origines WebSocket (`ALLOWED_ORIGINS`).
 - Le client n'insère jamais de texte joueur via `innerHTML`.
 
+## Vie privée : présence des mineurs
+
+La présence révèle aux autres joueurs le **dernier bloc frappé** pendant 20 s, avec pseudo, apparence et brigade. Cette information se déduisait déjà en partie des deltas, sans les noms. Elle n'est pas persistée, n'inclut jamais la position de caméra ni l'adresse IP, et chaque joueur peut la masquer (option du profil, testée). Le choix de masquage est enregistré en base.
+
 ## Limites connues
 
 Voir [AUDIT.md § 3](AUDIT.md#3-problèmes-restant-ouverts) : multi-comptes via plusieurs IP, robots respectant les limites, IP partagées (NAT), homoglyphes entre alphabets, jeton en `localStorage` (vol possible en cas de XSS), `/api/stats` public, perte des dernières transactions en cas de coupure électrique avec `SQLITE_SYNCHRONOUS=NORMAL`, déni de service non testé. Le HTTPS doit être assuré par un reverse proxy.

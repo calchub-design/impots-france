@@ -1,6 +1,6 @@
 # The Last Block — prototype
 
-Jeu de minage coopératif mondial : un cube commun, composé de couches de blocs, que tous les joueurs minent ensemble en temps réel. Chaque saison couronne un **champion** (meilleure contribution), une **brigade championne** et le détenteur honorifique de la **Pierre finale** (celui ou celle qui brise le dernier bloc).
+Jeu de minage coopératif mondial : un cube colossal commun, composé de couches de blocs, que tous les joueurs minent ensemble en temps réel. On explore sa surface, bien plus grande que l'écran, avec une caméra 2.5D (glisser, pincer, molette, clavier). Chaque saison couronne un **champion** (meilleure contribution), une **brigade championne** et le détenteur honorifique de la **Pierre finale** (celui ou celle qui brise le dernier bloc).
 
 > Prototype. Aucun paiement, aucune collecte, aucun gain d'argent, aucun avantage payant.
 > Aucun audit de sécurité externe n'a été réalisé. Un audit ciblé interne et ses limites sont décrits dans [docs/AUDIT.md](docs/AUDIT.md). La tenue en charge n'a été mesurée que sur une machine de test (voir [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
@@ -44,9 +44,9 @@ npm start         # sert le client et le WebSocket sur PORT (8080)
 ## Tests
 
 ```bash
-npm test             # 90 tests Vitest (8 fichiers), ~6 s
+npm test             # 113 tests Vitest (10 fichiers), ~6 s
 npm run typecheck    # TypeScript (serveur, client, tests, scripts)
-npm run build && npm run e2e   # test réel : deux Chromium (mobile + bureau), SIGKILL du serveur, Pierre finale
+npm run build && npm run e2e   # test réel : deux Chromium (mobile tactile + bureau), 30 vérifications
 npm run loadtest -- --bots 100 --seconds 15
 npm run calibrate -- --days 30 --players 200 --minutes 30
 ```
@@ -63,13 +63,21 @@ npm run calibrate -- --days 30 --players 200 --minutes 30
 | `tests/crash.test.ts` | **SIGKILL réel** du serveur en plein minage, invariants SQLite, reprise complète |
 | `tests/calibration.test.ts` | calibrage et **simulation complète d'une saison de 30 jours** |
 | `tests/migration.test.ts` | migration d'une base au schéma v1 |
+| `tests/world.test.ts` | caméra (limites, zoom ancré, inertie), gestes (toucher/glisser/pincer), modèle de face |
+| `tests/presence.test.ts` | présence observée : expiration 20 s, coups refusés ignorés, masquage, changement de couche, WebSocket |
+
+Le script `npm run e2e` utilise deux navigateurs distincts : un iPhone 13 émulé, avec gestes tactiles réels via CDP, et un ordinateur. Il vérifie le glisser, le pincer, la sélection et le minage après déplacement, la synchronisation des destructions, la présence, le panneau, l'absence de chevauchement à 5 tailles d'écran, un SIGKILL du serveur, `prefers-reduced-motion`, la fin de saison, l'absence d'erreur JavaScript, et mesure les performances. Détails et résultats : [docs/REFONTE.md](docs/REFONTE.md).
 
 ## Comment jouer
 
-- Touchez un bloc de la couche supérieure (le toucher est « aimanté » vers le bloc le plus proche), maintenez le bouton **Miner** (fixé en bas de l'écran sur mobile), ou utilisez la barre d'espace sur ordinateur.
-- Chaque coup retire 1 point de résistance ; plus on descend, plus les blocs sont durs.
-- Une couche doit être entièrement détruite pour accéder à la suivante.
-- Le panneau géant affiche le podium de la saison, la brigade de chacun, les montées au classement (▲), votre position si vous êtes hors du top, l'avancement du cube et l'alerte « Pierre finale en jeu ». Pendant l'intersaison, il honore les titres de la saison écoulée.
+- **Se déplacer** : glisser (doigt ou souris), avec inertie ; flèches, ZQSD ou WASD au clavier.
+- **Zoomer** : pincer, molette, boutons + et −, ou touches + et −.
+- **Choisir un bloc** : un toucher bref ou un clic. Le toucher est « aimanté » vers un bloc vivant proche. Toucher ne mine pas.
+- **Miner** : bouton **Miner**, sous la surface, sans jamais la recouvrir. Le maintenir mine en continu, et Espace fait de même. Un bloc est présélectionné à l'ouverture : on peut miner tout de suite.
+- **Retrouver son chemin** : ◎ recentre sur votre bloc, ▦ ouvre la vue d'ensemble du cube entier (toucher un bloc pour s'y rendre). La mini-carte en haut à droite permet aussi de s'y rendre.
+- **Panneau géant** : un monumental panneau lumineux se dresse au nord de la face, avec le top 3, la meilleure brigade, l'avancement et la saison. Un bandeau compact le résume ; ★ (ou un toucher sur le bandeau) amène la caméra devant lui. Le classement complet est dans **Menu → Classement**.
+- **Autres mineurs** : les marqueurs montrent le dernier bloc frappé par chaque joueur au cours des 20 dernières secondes. Ce sont des observations réelles, aux couleurs de la brigade. ⚑ amène la caméra vers un membre de votre brigade vu récemment. L'option « montrer ma position » se trouve dans le profil.
+- **Règles du cube** : chaque coup retire 1 point de résistance ; les blocs profonds sont plus durs ; une couche doit être entièrement détruite pour accéder à la suivante.
 - Onglet **Brigade** : créez une brigade (code d'invitation) ou rejoignez-en une avec un code.
 - Onglet **Profil** : pseudo (unique), apparence, « Déconnecter mes autres appareils » (nouveau jeton), « Abandonner ce compte invité » (révocation).
 
@@ -83,6 +91,10 @@ Le script propose `CUBE_SIZE`, `BLOCK_BASE_HP`, `BLOCK_HP_PER_LAYER` et `SEASON_
 
 **Achèvement anticipé** : si le cube est terminé avant l'échéance, la saison se clôt immédiatement (`endReason: completed`). La Pierre finale et le champion sont attribués, et l'avance sur l'échéance est indiquée (`completedEarlyMs`, fenêtre de fin de saison, archives). La saison suivante démarre après `SEASON_COOLDOWN_SECONDS`, avec une nouvelle échéance complète. Si l'échéance arrive avant la fin du cube, la saison se clôt par `timeout` sans Pierre finale.
 
+## Refonte « cube colossal navigable »
+
+Voir [docs/REFONTE.md](docs/REFONTE.md) : analyse, architecture caméra, ce qui est fonctionnel ou non, tests, performances mesurées et captures avant/après. Une seule face est jouable : le dessus de la couche courante, la seule que le serveur sert. La taille par défaut du cube est désormais **32** (`CUBE_SIZE`, jusqu'à 64), soit une surface de 32 × 32 blocs.
+
 ## Architecture (résumé)
 
 ```
@@ -94,7 +106,9 @@ the-last-block/
     game/       moteur autoritaire, limiteur de débit, temps actif, validations
     auth/       comptes invités (jeton haché) + interfaces Google/Apple (non implémentées)
     net/        HTTP (API, statiques, CSP), WebSocket, adresse IP client
-  client/       Vite + TypeScript + Canvas 2D (scene.ts), réseau avec reconnexion (net.ts)
+  client/       Vite + TypeScript + Canvas 2D, réseau avec reconnexion (net.ts)
+    world/      surface navigable : face, caméra, gestes, rendu, mini-carte, panneau, présence
+    scene.ts    vue isométrique du cube entier (« Vue d'ensemble »)
   tests/        tests unitaires, d'intégration, de sécurité, de crash
   scripts/      dev, loadtest, calibrate, e2e-browser
   docs/         AUDIT, ARCHITECTURE, DEPLOYMENT, SECURITY
@@ -153,6 +167,7 @@ the-last-block/
 - [ ] Adaptateur PostgreSQL et exécution multi-processus.
 - [ ] Fuseau horaire par joueur pour la limite quotidienne (minuit UTC).
 - [ ] Modération des pseudos et détection des homoglyphes entre alphabets.
-- [ ] Zoom sur la couche courante pour les très grands cubes ; navigation clavier bloc par bloc.
+- [x] Surface navigable (caméra, zoom, mini-carte, vue d'ensemble), panneau monumental dans le décor, présence réelle des mineurs.
+- [ ] Une seule face jouable (dessus de la couche courante) ; navigation clavier bloc par bloc ; surface étroite sur téléphone en paysage.
 - [ ] Tests sur téléphones physiques, Safari et Firefox.
 - [ ] Magasin cosmétique, notifications, sons, PWA hors ligne.
