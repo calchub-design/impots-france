@@ -24,7 +24,7 @@ export class Minimap {
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
-    private readonly camera: Camera,
+    public camera: Camera,
     private readonly onJump: (wx: number, wy: number, final: boolean) => void,
   ) {
     this.ctx = canvas.getContext('2d')!;

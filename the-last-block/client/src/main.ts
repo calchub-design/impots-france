@@ -24,6 +24,7 @@ import { Minimap } from './world/minimap.js';
 import { brigadeColor, groupByBlock, PresenceLayer, presenceAge, type PresenceMarker } from './world/presence.js';
 import { MonolithView } from './world/monolith/view.js';
 import { SurfaceView } from './world/surface.js';
+import type { PointerKind } from './world/gestures.js';
 import type { WorldView } from './world/view.js';
 import { layerColor, scale } from './world/monolith/material.js';
 
@@ -111,13 +112,19 @@ function chooseRenderer(): RendererKind {
   if (storageGet('tlb.renderer.auto') === 'classic') return 'classic';
   return DEFAULT_RENDERER;
 }
-const rendererKind = chooseRenderer();
-const world: WorldView = rendererKind === 'monolith' ? new MonolithView($<HTMLCanvasElement>('#world')) : new SurfaceView($<HTMLCanvasElement>('#world'));
-const monolith = world instanceof MonolithView ? world : null;
-document.body.dataset.renderer = rendererKind;
+let rendererKind = chooseRenderer();
 const billboard = new BillboardLayer();
 const presence = new PresenceLayer();
-world.layers = [billboard, presence];
+function createView(kind: RendererKind, canvas: HTMLCanvasElement): WorldView {
+  const v: WorldView = kind === 'monolith' ? new MonolithView(canvas) : new SurfaceView(canvas);
+  v.layers = [billboard, presence];
+  return v;
+}
+// `world` et `monolith` peuvent être remplacés à chaud (voir swapRenderer) : le reste du
+// code les lit toujours au moment de l'appel.
+let world: WorldView = createView(rendererKind, $<HTMLCanvasElement>('#world'));
+let monolith: MonolithView | null = world instanceof MonolithView ? world : null;
+document.body.dataset.renderer = rendererKind;
 const minimap = new Minimap($<HTMLCanvasElement>('#minimap'), world.camera, (wx, wy, final) => {
   world.camera.animateTo({ x: wx, y: wy }, final ? animMs(250) : 0);
   world.requestRender();
@@ -356,14 +363,16 @@ function updateCoords() {
   $('#coords').textContent = face ? `x ${Math.floor(c.x)} · y ${Math.floor(c.y)} / ${face.size}` : '—';
 }
 
-world.onCameraMove = () => {
+function handleCameraMove() {
   updateBannerVisibility();
   minimap.draw();
   updateCoords();
   saveCamera();
-};
+}
+world.onCameraMove = handleCameraMove;
+world.onTap = handleTap;
 
-world.onTap = (wx, wy, kind) => {
+function handleTap(wx: number, wy: number, kind: PointerKind) {
   if (!face) return;
   // Toucher indulgent : rayon d'aimantation d'au moins ~22 px ou un demi-bloc.
   const radiusPx = kind === 'touch' ? 22 : 10;
@@ -437,12 +446,51 @@ function toggleOverview() {
   else monolith.showMonument();
 }
 $('#overview-btn').addEventListener('click', toggleOverview);
-if (monolith) {
+const classicTint = minimap.tint;
+/** Réglages d'interface propres au rendu actif (au démarrage et après un remplacement à chaud). */
+function applyRendererUi() {
+  document.body.dataset.renderer = rendererKind;
   // Mini-carte aux couleurs du monolithe (pierre-tech, éclaircie pour rester lisible).
-  minimap.tint = (layer, size) => scale(layerColor(layer, size), 1.7);
-  $('#overview-btn').title = 'Vue monumentale du cube (V)';
-  $('#overview-btn').setAttribute('aria-label', 'Vue monumentale du cube');
-  setInterval(updateBannerVisibility, 400);
+  minimap.tint = monolith ? (layer, size) => scale(layerColor(layer, size), 1.7) : classicTint;
+  minimap.version++;
+  const label = monolith ? 'Vue monumentale du cube' : "Vue d'ensemble du cube";
+  $('#overview-btn').title = `${label} (V)`;
+  $('#overview-btn').setAttribute('aria-label', label);
+  if (!monolith) $('#viewport').classList.remove('monumental');
+  for (const input of document.querySelectorAll<HTMLInputElement>('input[name="renderer"]')) input.checked = input.value === rendererKind;
+}
+applyRendererUi();
+setInterval(updateBannerVisibility, 400);
+
+/**
+ * Remplace le rendu sans recharger la page : nouveau canevas (les anciens
+ * gestionnaires d'événements disparaissent avec l'ancien), mêmes couches,
+ * même position de caméra, même état de jeu.
+ */
+function swapRenderer(kind: RendererKind) {
+  if (kind === rendererKind) return;
+  const prev = world;
+  const old = $<HTMLCanvasElement>('#world');
+  const canvas = old.cloneNode(false) as HTMLCanvasElement;
+  old.replaceWith(canvas);
+  prev.dispose();
+  const v = createView(kind, canvas);
+  v.reducedMotion = reducedMotion;
+  v.camera.inertia = !reducedMotion;
+  v.lowFx = prev.lowFx;
+  v.onTap = handleTap;
+  v.onCameraMove = handleCameraMove;
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  world = v;
+  monolith = v instanceof MonolithView ? v : null;
+  rendererKind = kind;
+  minimap.camera = v.camera;
+  closeOverview();
+  applyRendererUi();
+  applyCube(false);
+  v.camera.animateTo({ x: prev.camera.x, y: prev.camera.y, zoom: Math.max(v.camera.minZoom, Math.min(v.camera.maxZoom, prev.camera.zoom)) }, 0);
+  v.resize();
+  syncWorld();
 }
 $('#overview-close').addEventListener('click', closeOverview);
 $('#overview').addEventListener('click', (e) => e.target === $('#overview') && closeOverview());
@@ -802,6 +850,7 @@ window.addEventListener('resize', placeToasts);
 // ou si moins de ~25 images/s sont réellement affichées pendant les animations
 // (coût d'affichage d'un grand canevas haute densité), on bascule une fois, sauf
 // choix explicite de l'utilisateur.
+let slowChecks = 0;
 setInterval(() => {
   const t = world.recentFrameTimes;
   // Les pauses du rendu (rien ne bouge) ne sont pas enregistrées ; 20 images suffisent
@@ -809,17 +858,21 @@ setInterval(() => {
   const iv = world.recentFrameIntervals.filter((x) => x < 10_000).sort((a, b) => a - b);
   const avg = t.length ? t.reduce((a, b) => a + b, 0) / t.length : 0;
   const medianInterval = iv.length >= 20 ? iv[Math.floor(iv.length / 2)] : 0;
+  const slow = medianInterval > 33; // sous 30 images/s
   if (world.lowFx) {
-    // Déjà allégé et toujours sous ~20 images/s : le rendu classique sera utilisé au
-    // prochain chargement (sauf choix explicite du joueur). Pas de rechargement en pleine partie.
-    if (monolith && medianInterval > 50 && storageGet('tlb.renderer') === null && storageGet('tlb.renderer.auto') === null) {
+    // Déjà allégé et toujours sous 30 images/s pendant deux contrôles (≥ 10 s) : on passe
+    // au rendu classique tout de suite, sans recharger (sauf choix explicite du joueur).
+    slowChecks = slow ? slowChecks + 1 : 0;
+    if (monolith && slowChecks >= 2 && storageGet('tlb.renderer') === null) {
       storageSet('tlb.renderer.auto', 'classic');
-      toast('Appareil lent : le rendu classique, plus léger, sera utilisé au prochain chargement (réglable dans Profil).', 'info');
+      swapRenderer('classic');
+      slowChecks = 0;
+      toast('Appareil lent : passage au rendu classique, plus léger, pour garder la fluidité (réglable dans Profil).', 'info');
     }
     return;
   }
   if (storageGet('tlb.lowfx') !== null) return; // choix explicite du joueur : on ne force rien
-  if ((t.length >= 20 && avg > 14) || medianInterval > 40) {
+  if ((t.length >= 20 && avg > 14) || slow) {
     world.lowFx = true;
     lowFxBox.checked = true;
     world.resize();
@@ -834,8 +887,10 @@ $<HTMLInputElement>('#presence-visible').addEventListener('change', (e) => {
 for (const input of document.querySelectorAll<HTMLInputElement>('input[name="renderer"]')) {
   input.checked = input.value === rendererKind;
   input.addEventListener('change', () => {
+    // Choix explicite : mémorisé, appliqué immédiatement, sans rechargement.
     storageSet('tlb.renderer', input.value);
-    location.reload();
+    storageSet('tlb.renderer.auto', '');
+    swapRenderer(input.value as RendererKind);
   });
 }
 
@@ -1191,7 +1246,14 @@ fetch('/api/config')
   .catch(() => {});
 
 // Exposé pour le débogage manuel dans la console.
-(window as unknown as { tlb: unknown }).tlb = { state, socket, world, minimap };
+(window as unknown as { tlb: unknown }).tlb = {
+  state,
+  socket,
+  minimap,
+  get world() {
+    return world;
+  },
+};
 
 // Connexion en dernier : toute l'interface est initialisée.
 socket.connect();

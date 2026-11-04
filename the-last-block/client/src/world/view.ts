@@ -58,4 +58,6 @@ export interface WorldView {
   impact(idx: number, kind: ImpactKind, color?: string, label?: string): void;
   readonly recentFrameTimes: number[];
   readonly recentFrameIntervals: number[];
+  /** Arrête la boucle et les observateurs (remplacement du rendu à chaud). */
+  dispose(): void;
 }

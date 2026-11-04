@@ -91,13 +91,16 @@ export class SurfaceView implements WorldView {
   private texts: FloatText[] = [];
   private shakeUntil = 0;
   private frameTimes: number[] = [];
+  private resizeObs: ResizeObserver | null = null;
+  private disposed = false;
   /** Intervalles entre images consécutives pendant une animation (fluidité réellement obtenue). */
   private frameIntervals: number[] = [];
   private lastAny = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
-    new ResizeObserver(() => this.resize()).observe(canvas);
+    this.resizeObs = new ResizeObserver(() => this.resize());
+    this.resizeObs.observe(canvas);
     this.resize();
     attachGestures(
       canvas,
@@ -165,7 +168,14 @@ export class SurfaceView implements WorldView {
   }
 
   requestRender() {
-    if (!this.raf) this.raf = requestAnimationFrame(this.frame);
+    if (!this.raf && !this.disposed) this.raf = requestAnimationFrame(this.frame);
+  }
+
+  dispose() {
+    this.disposed = true;
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    this.resizeObs?.disconnect();
   }
 
   /** Intervalles des dernières images animées (ms). */

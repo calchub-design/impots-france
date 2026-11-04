@@ -116,6 +116,8 @@ export class MonolithView implements WorldView {
   private texts: FloatText[] = [];
   private shakeUntil = 0;
   private frameTimes: number[] = [];
+  private resizeObs: ResizeObserver | null = null;
+  private disposed = false;
   private frameIntervals: number[] = [];
   /** Instant de la dernière image « utile » (hors images d'ambiance), pour mesurer la fluidité. */
   private lastAny = 0;
@@ -135,7 +137,8 @@ export class MonolithView implements WorldView {
     for (let i = 0; i < 220; i++) {
       this.stars.push({ x: hash2(i, 1, 3), y: hash2(i, 2, 3), s: 0.5 + hash2(i, 3, 3) * 1.3, a: 0.25 + hash2(i, 4, 3) * 0.6, p: hash2(i, 5, 3) * 6.28 });
     }
-    new ResizeObserver(() => this.resize()).observe(canvas);
+    this.resizeObs = new ResizeObserver(() => this.resize());
+    this.resizeObs.observe(canvas);
     this.resize();
     attachGestures(
       canvas,
@@ -223,7 +226,14 @@ export class MonolithView implements WorldView {
   }
 
   requestRender() {
-    if (!this.raf) this.raf = requestAnimationFrame(this.frame);
+    if (!this.raf && !this.disposed) this.raf = requestAnimationFrame(this.frame);
+  }
+
+  dispose() {
+    this.disposed = true;
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    this.resizeObs?.disconnect();
   }
 
   get recentFrameTimes(): number[] {
