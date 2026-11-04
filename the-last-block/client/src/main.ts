@@ -868,7 +868,7 @@ new ResizeObserver(placeToasts).observe($('#viewport'));
 window.addEventListener('resize', placeToasts);
 
 // Effets réduits automatiques : si le dessin d'une image dépasse ~14 ms en moyenne,
-// ou si moins de ~25 images/s sont réellement affichées pendant les animations
+// ou si moins de 30 images/s sont réellement affichées pendant les animations
 // (coût d'affichage d'un grand canevas haute densité), on bascule une fois, sauf
 // choix explicite de l'utilisateur.
 let slowChecks = 0;

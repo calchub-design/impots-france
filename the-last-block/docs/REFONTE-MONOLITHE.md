@@ -27,6 +27,8 @@ Ce document couvre uniquement la première étape demandée : **la sensation d'�
 
 ## Rendu par défaut et filet de sécurité
 
+> **Mis à jour à l'étape 2** : le repli vers le rendu classique se fait désormais **pendant la session, sans rechargement**, sous 30 images/s. Voir [REFONTE-MONOLITHE-2.md](REFONTE-MONOLITHE-2.md). Le texte ci-dessous décrit l'étape 1.
+
 Le rendu « monolithe » est désormais **le rendu par défaut**, car il est jouable et testé (voir plus bas). Pour les appareils modestes :
 
 1. Si la fluidité réelle tombe sous ~25 images/s, **glisser du doigt compris**, les effets réduits s'activent automatiquement : résolution standard, sans chanfreins, veines ni glyphes.
