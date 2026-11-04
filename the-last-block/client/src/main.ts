@@ -85,7 +85,7 @@ const profile = (params.get('profil') ?? params.get('profile') ?? 'default').rep
 
 const world = new SurfaceView($<HTMLCanvasElement>('#world'));
 const minimap = new Minimap($<HTMLCanvasElement>('#minimap'), world.camera, (wx, wy, final) => {
-  world.camera.animateTo({ x: wx, y: wy }, final ? 250 : 0);
+  world.camera.animateTo({ x: wx, y: wy }, final ? animMs(250) : 0);
   world.requestRender();
   saveCamera();
 });
@@ -97,6 +97,8 @@ let cameraReady = false;
 const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 world.reducedMotion = reducedMotion;
 world.camera.inertia = !reducedMotion;
+/** Durée d'animation de caméra : nulle si l'utilisateur préfère réduire les mouvements. */
+const animMs = (ms: number) => (reducedMotion ? 0 : ms);
 
 function storageGet(key: string): string | null {
   try {
@@ -178,6 +180,15 @@ function applyCube(reset: boolean) {
   syncWorld();
 }
 
+/** Signale une attente réseau anormale (> 400 ms) sur le bouton Miner. */
+function updateWaiting() {
+  const now = Date.now();
+  const slow = [...pendingHits.values()].some((p) => now - p.at > 400);
+  mineBtn.classList.toggle('waiting', slow);
+  if (slow) $('#mine-hint').textContent = 'En attente de confirmation du serveur…';
+}
+setInterval(updateWaiting, 200);
+
 function syncWorld() {
   world.setState({
     face,
@@ -232,7 +243,7 @@ function ensureVisible(idx: number) {
   const v = world.camera.visibleWorld();
   const m = 1;
   if (x < v.minX + m || x + 1 > v.maxX - m || y < v.minY + m || y + 1 > v.maxY - m) {
-    world.camera.animateTo({ x: x + 0.5, y: y + 0.5 }, 300);
+    world.camera.animateTo({ x: x + 0.5, y: y + 0.5 }, animMs(300));
     world.requestRender();
   }
 }
@@ -245,7 +256,7 @@ const overview = new Scene(
     if (!face || !(face.hp[block] > 0)) return;
     state.selected = block;
     const { x, y } = toXY(block, face.size);
-    world.camera.animateTo({ x: x + 0.5, y: y + 0.5, zoom: defaultZoom() }, 450);
+    world.camera.animateTo({ x: x + 0.5, y: y + 0.5, zoom: defaultZoom() }, animMs(450));
     syncWorld();
   },
   { billboard: false },
@@ -275,11 +286,11 @@ $('#overview-close').addEventListener('click', closeOverview);
 $('#overview').addEventListener('click', (e) => e.target === $('#overview') && closeOverview());
 
 $('#zoom-in').addEventListener('click', () => {
-  world.camera.animateTo({ zoom: world.camera.zoom * 1.4 }, reducedMotion ? 0 : 200);
+  world.camera.animateTo({ zoom: world.camera.zoom * 1.4 }, animMs(200));
   world.requestRender();
 });
 $('#zoom-out').addEventListener('click', () => {
-  world.camera.animateTo({ zoom: world.camera.zoom / 1.4 }, reducedMotion ? 0 : 200);
+  world.camera.animateTo({ zoom: world.camera.zoom / 1.4 }, animMs(200));
   world.requestRender();
 });
 function recenter() {
@@ -288,7 +299,7 @@ function recenter() {
   if (target === null) return;
   state.selected = target;
   const { x, y } = toXY(target, face.size);
-  world.camera.animateTo({ x: x + 0.5, y: y + 0.5, zoom: defaultZoom() }, reducedMotion ? 0 : 450);
+  world.camera.animateTo({ x: x + 0.5, y: y + 0.5, zoom: defaultZoom() }, animMs(450));
   syncWorld();
 }
 $('#recenter').addEventListener('click', recenter);
@@ -384,7 +395,9 @@ function onMessage(msg: ServerMessage) {
         if (msg.layer !== undefined && msg.block !== undefined && msg.hpAfter !== undefined) {
           setHp(msg.layer, msg.block, msg.hpAfter);
           // Effet uniquement APRÈS confirmation du serveur.
-          if (!msg.duplicate && msg.layer === state.cube?.currentLayer) world.impact(msg.block, msg.destroyed ? 'destroyed' : 'confirmed', myColor());
+          if (!msg.duplicate && msg.layer === state.cube?.currentLayer) {
+            world.impact(msg.block, msg.destroyed ? 'destroyed' : 'confirmed', myColor(), msg.destroyed ? 'bloc !' : '+1');
+          }
           if (msg.destroyed && !msg.duplicate) haptic(12);
         }
         if (msg.me) state.me = msg.me;
@@ -602,11 +615,34 @@ $('#menu-btn').addEventListener('click', () => (panelOpen() ? closePanel() : ope
 $('#panel-close').addEventListener('click', closePanel);
 $('#backdrop').addEventListener('click', closePanel);
 
-// Les notifications restent au-dessus de la barre d'action.
-new ResizeObserver(() => {
-  const h = $('.actionbar').getBoundingClientRect().height;
-  document.documentElement.style.setProperty('--toast-bottom', `${Math.round(h + 12)}px`);
-}).observe($('.actionbar'));
+// Notifications : en haut de la surface, à gauche de la mini-carte (aucun chevauchement de commande).
+function placeToasts() {
+  const v = $('#viewport').getBoundingClientRect();
+  const map = $('.map-box').getBoundingClientRect();
+  const banner = document.querySelector<HTMLElement>('#banner');
+  const top = banner && !banner.hidden ? banner.getBoundingClientRect().bottom + 6 : v.top + 8;
+  const root = document.documentElement.style;
+  root.setProperty('--toast-top', `${Math.round(top)}px`);
+  root.setProperty('--toast-left', `${Math.round(v.left + 8)}px`);
+  root.setProperty('--toast-width', `${Math.round(Math.min(420, map.left - v.left - 16))}px`);
+}
+new ResizeObserver(placeToasts).observe($('#viewport'));
+window.addEventListener('resize', placeToasts);
+
+// Effets réduits automatiques : si le dessin d'une image dépasse ~14 ms en moyenne
+// (appareil modeste), on bascule une fois, sauf choix explicite de l'utilisateur.
+setInterval(() => {
+  if (world.lowFx || storageGet('tlb.lowfx') !== null) return;
+  const t = world.recentFrameTimes;
+  if (t.length < 60) return;
+  const avg = t.reduce((a, b) => a + b, 0) / t.length;
+  if (avg > 14) {
+    world.lowFx = true;
+    lowFxBox.checked = true;
+    world.resize();
+    toast('Affichage allégé automatiquement pour garder la fluidité (réglable dans Profil).', 'info');
+  }
+}, 5000);
 
 const lowFxBox = $<HTMLInputElement>('#low-fx');
 lowFxBox.checked = world.lowFx;

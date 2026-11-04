@@ -49,6 +49,14 @@ interface Particle {
   size: number;
 }
 
+interface FloatText {
+  x: number;
+  y: number;
+  text: string;
+  color: string;
+  t0: number;
+}
+
 interface Flash {
   idx: number;
   kind: ImpactKind;
@@ -78,6 +86,7 @@ export class SurfaceView {
   private hover: number | null = null;
   private flashes: Flash[] = [];
   private particles: Particle[] = [];
+  private texts: FloatText[] = [];
   private shakeUntil = 0;
   private frameTimes: number[] = [];
 
@@ -161,10 +170,15 @@ export class SurfaceView {
 
   // --- Effets (déclenchés uniquement par des confirmations serveur) ---------
 
-  impact(idx: number, kind: ImpactKind, color = '#ffe08a') {
+  impact(idx: number, kind: ImpactKind, color = '#ffe08a', label?: string) {
     const f = this.state.face;
     if (!f) return;
     const now = performance.now();
+    if (label) {
+      const p = toXY(idx, f.size);
+      this.texts.push({ x: p.x + 0.5, y: p.y + 0.2, text: label, color, t0: now });
+      if (this.texts.length > 20) this.texts.shift();
+    }
     this.flashes.push({ idx, kind, t0: now });
     if (this.flashes.length > 80) this.flashes.splice(0, this.flashes.length - 80);
     const { x, y } = toXY(idx, f.size);
@@ -215,7 +229,7 @@ export class SurfaceView {
     this.draw(t);
     this.frameTimes.push(performance.now() - t0);
     if (this.frameTimes.length > 120) this.frameTimes.shift();
-    const fxActive = this.particles.length > 0 || this.flashes.length > 0 || t < this.shakeUntil;
+    const fxActive = this.particles.length > 0 || this.flashes.length > 0 || this.texts.length > 0 || t < this.shakeUntil;
     const layersActive = this.layers.some((l) => l.animating?.());
     if (keep || this.camera.animating || fxActive || this.state.pending.size > 0 || layersActive) this.requestRender();
     else this.last = 0;
@@ -560,6 +574,22 @@ export class SurfaceView {
       ctx.fillStyle = p.color;
       const s = Math.max(1.5, p.size * z);
       ctx.fillRect(px - s / 2, py - p.z * z * WALL - s / 2, s, s);
+      return true;
+    });
+    ctx.globalAlpha = 1;
+    // Textes flottants (« +1 », « bloc ! ») au-dessus du bloc confirmé
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `800 ${Math.max(12, Math.min(18, z * 0.38))}px system-ui, sans-serif`;
+    this.texts = this.texts.filter((t) => {
+      const age = (time - t.t0) / 900;
+      if (age > 1 || age < -0.1) return false;
+      const [px, py] = cam.worldToScreen(t.x, t.y);
+      ctx.globalAlpha = 1 - Math.max(0, age);
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillText(t.text, px + 1, py - age * z * 0.9 + 1);
+      ctx.fillStyle = t.color;
+      ctx.fillText(t.text, px, py - age * z * 0.9);
       return true;
     });
     ctx.globalAlpha = 1;

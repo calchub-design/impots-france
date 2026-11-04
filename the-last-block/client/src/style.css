@@ -413,19 +413,21 @@ dialog button {
 /* --- Notifications -------------------------------------------------------- */
 
 .toasts {
+  /* Placées en haut de la surface, à gauche de la mini-carte : jamais sur le
+     bouton Miner, la barre de temps, les commandes de caméra ni les menus. */
   position: fixed;
-  left: 50%;
-  bottom: calc(1rem + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
+  top: var(--toast-top, 70px);
+  left: var(--toast-left, 12px);
+  width: var(--toast-width, min(80vw, 420px));
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
   z-index: 20;
-  width: min(92vw, 420px);
   pointer-events: none;
 }
 
 .toast {
+  font-size: 0.84rem;
   background: #232848;
   border: 1px solid var(--line);
   border-left: 4px solid var(--gold);
@@ -737,9 +739,7 @@ body {
   touch-action: manipulation;
 }
 
-#toasts {
-  bottom: var(--toast-bottom, 1rem);
-}
+
 
 @media (max-width: 899px) {
   .layout {
@@ -809,5 +809,25 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .panel {
     transition: none;
+  }
+}
+
+.mine-btn.waiting {
+  background: linear-gradient(#e9d9a6, #c9a75a);
+}
+
+.mine-btn.waiting .pick {
+  animation: tick 0.8s ease-in-out infinite;
+}
+
+@keyframes tick {
+  50% {
+    transform: rotate(-25deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mine-btn.waiting .pick {
+    animation: none;
   }
 }
