@@ -20,8 +20,8 @@
 
 1. **Validation de forme** : `actionId` (8–64 caractères URL-safe), `layer` et `block` entiers.
 2. **Idempotence** : si `(player_id, action_id)` existe déjà dans `hits`, on renvoie le résultat enregistré (`duplicate: true`), sans rien modifier ni consommer la limite de débit.
-3. **Saison** : refus si aucune saison active ; si l'échéance est dépassée, la saison est clôturée.
-4. **Débit** : fenêtre glissante exacte de 1 000 ms, 5 coups max par **compte**.
+3. **Saison** : refus si aucune saison active ; si l'échéance est dépassée, la saison est clôturée (datée de l'échéance).
+4. **Débit** : fenêtre glissante exacte de 1 000 ms, 5 coups max par **compte** (toutes sessions confondues).
 5. **Temps actif** : refus si le compteur du jour a atteint la limite.
 6. **Règles du cube** : bornes, couche courante uniquement, bloc vivant (contrôle mémoire rapide).
 7. **Transaction SQLite** :
@@ -42,13 +42,35 @@ Node.js exécute ce traitement de façon synchrone : deux coups ne s'entrelacent
 
 ## Temps de jeu actif
 
-Seul l'écart entre deux coups acceptés consécutifs est crédité, et seulement s'il est ≤ `IDLE_GAP_SECONDS` (20 s par défaut). Le premier coup après une pause n'est pas crédité. Granularité : un joueur qui frappe toutes les 19 s se voit compter 19 s par coup. Un écart à cheval sur minuit UTC n'est crédité que pour sa partie du nouveau jour.
+Modèle « réunion des fenêtres » (`server/game/playtime.ts`) : chaque coup accepté rend le joueur actif pendant W = `IDLE_GAP_SECONDS` (5 s par défaut). Le temps actif est la durée de la réunion de ces fenêtres ; un coup crédite donc `min(écart depuis le coup précédent, W)` (W pour le premier coup).
+
+- Jeu continu : le temps compté suit le temps réel.
+- Pause de durée P : seule une durée min(P, W) est comptée.
+- Aucun coup n'est gratuit : espacer ses coups coûte W par coup. Avec W ≥ 1 s et 5 coups/s maximum, le nombre de coups par jour est borné par 5 × limite (s) + 5, soit ≈ 72 000 pour 4 h, **quel que soit le rythme adopté** (vérifié sur 5 rythmes adversariaux).
+- Le crédit est imputé au jour UTC du coup et plafonné à la durée écoulée depuis minuit.
+
+La version précédente ne comptait que les écarts ≤ 20 s : frapper toutes les 21 s permettait de jouer sans limite (voir AUDIT.md, problème D).
+
+## Reprise après arrêt brutal
+
+Toutes les écritures d'un coup sont dans une seule transaction ; la mémoire n'est mise à jour qu'après COMMIT et entièrement reconstruite depuis la base au démarrage. Cas particuliers traités au démarrage :
+
+- saison dont le dernier bloc a été détruit mais pas encore clôturée (crash entre les deux transactions) : clôture `completed` avec la Pierre finale retrouvée dans `hits` ;
+- échéance dépassée pendant l'arrêt : clôture `timeout` datée de l'échéance ;
+- intersaison : le délai avant la saison suivante est recalculé depuis la date de fin en base.
+
+Vérifié par `tests/crash.test.ts` avec un vrai SIGKILL du processus serveur.
+
+## Estimation de fin et calibrage
+
+- `shared/calibration.ts` : total de coups d'un cube, `taille² × (taille × base + parCouche × taille × (taille − 1) / 2)`, et choix des paramètres pour une durée visée (`npm run calibrate`).
+- `GameEngine.projection()` : coups portés / restants (somme des PV en mémoire), rythme moyen depuis le début de saison (robuste aux cycles jour/nuit), date de fin estimée. Exposé par `GET /api/season/projection` et diffusé avec le classement.
 
 ## Données (SQLite)
 
 | Table | Rôle |
 |---|---|
-| `players` | compte invité : empreinte SHA-256 du jeton, pseudo, skin, dernier coup |
+| `players` | compte invité : empreinte SHA-256 du jeton, pseudo et sa clé d'unicité `name_key` (v2), skin, dernier coup |
 | `seasons` | saisons ; index unique partiel garantissant une seule saison `active` |
 | `blocks` | PV de chaque bloc de chaque saison, auteur et date de destruction |
 | `hits` | journal persistant de tous les coups acceptés (idempotence) |
@@ -56,6 +78,7 @@ Seul l'écart entre deux coups acceptés consécutifs est crédité, et seulemen
 | `playtime` | temps actif par joueur et par jour UTC |
 | `brigades`, `brigade_members` | brigades et appartenance (une brigade par joueur : clé primaire) |
 | `season_results` | archives des classements finaux |
+| `meta` | version du schéma (2) ; migrations idempotentes au démarrage (`SqliteStore.migrate`) |
 
 ## Évolution vers PostgreSQL
 
@@ -67,7 +90,7 @@ Le moteur ne dépend que de l'interface `GameStore` (`server/db/store.ts`). Pour
 
 ## Authentification
 
-- Prototype : comptes invités. Jeton aléatoire de 256 bits remis une seule fois, stocké côté client dans `localStorage`, côté serveur uniquement sous forme d'empreinte SHA-256.
+- Prototype : comptes invités. Jeton aléatoire de 256 bits remis une seule fois, stocké côté client dans `localStorage`, côté serveur uniquement sous forme d'empreinte SHA-256. La session est la connexion WebSocket ; un jeton inconnu est refusé (4003), rotation (`rotateToken`) et révocation (`logout`) disponibles. Détails : SECURITY.md.
 - Google / Apple : `server/auth/providers.ts` définit `IdentityProvider`. Les implémentations actuelles déclarent `isAvailable() === false` et lèvent une erreur : le serveur répond `auth_unavailable`. Les étapes d'une vraie vérification sont décrites dans le fichier.
 
 ## Cosmétiques et association

@@ -3,12 +3,13 @@
 Jeu de minage coopératif mondial : un cube commun, composé de couches de blocs, que tous les joueurs minent ensemble en temps réel. Chaque saison couronne un **champion** (meilleure contribution), une **brigade championne** et le détenteur honorifique de la **Pierre finale** (celui ou celle qui brise le dernier bloc).
 
 > Prototype. Aucun paiement, aucune collecte, aucun gain d'argent, aucun avantage payant.
-> Le serveur n'a **pas** été audité en sécurité et sa tenue en charge n'a été mesurée que sur une machine de test (voir plus bas).
+> Aucun audit de sécurité externe n'a été réalisé. Un audit ciblé interne et ses limites sont décrits dans [docs/AUDIT.md](docs/AUDIT.md). La tenue en charge n'a été mesurée que sur une machine de test (voir [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 
 ## Prérequis
 
-- **Node.js ≥ 22.13** (utilise le module intégré `node:sqlite` : aucune compilation native). Testé avec Node 22.23.
+- **Node.js ≥ 22.13** (module intégré `node:sqlite`, aucune compilation native). Testé avec Node 22.23.
 - npm.
+- Facultatif, pour le test à deux navigateurs : `playwright` et Chromium.
 
 ## Installation
 
@@ -29,10 +30,9 @@ npm run dev
 - Client Vite : http://localhost:5173 (relaie `/ws` et `/api` vers le serveur)
 - Serveur de jeu : http://localhost:8080
 
-**Tester à plusieurs dans un seul navigateur** : chaque fenêtre utilise le compte invité stocké dans le navigateur. Pour simuler deux joueurs, ouvrez par exemple
-`http://localhost:5173/?profil=alice` et `http://localhost:5173/?profil=bob` (ou une fenêtre de navigation privée).
+**Plusieurs joueurs dans un même navigateur** : chaque fenêtre utilise le compte invité stocké dans le navigateur. Ouvrez `http://localhost:5173/?profil=alice` et `http://localhost:5173/?profil=bob`, ou utilisez une fenêtre privée. Le paramètre `profil` ne choisit qu'un emplacement de stockage local ; il ne donne accès à aucun compte existant.
 
-**Sur un téléphone du même réseau** : ouvrez `http://<IP-du-PC>:5173`.
+**Sur un téléphone du même réseau** : `http://<IP-du-PC>:5173`.
 
 ### Production locale
 
@@ -44,37 +44,61 @@ npm start         # sert le client et le WebSocket sur PORT (8080)
 ## Tests
 
 ```bash
-npm test             # 42 tests Vitest : règles, concurrence, idempotence, persistance, WebSocket, HTTP
-npm run typecheck    # vérification TypeScript (serveur, client, tests)
-npm run loadtest -- --bots 100 --seconds 15   # test de charge simple (voir docs/DEPLOYMENT.md)
+npm test             # 90 tests Vitest (8 fichiers), ~6 s
+npm run typecheck    # TypeScript (serveur, client, tests, scripts)
+npm run build && npm run e2e   # test réel : deux Chromium (mobile + bureau), SIGKILL du serveur, Pierre finale
+npm run loadtest -- --bots 100 --seconds 15
+npm run calibrate -- --days 30 --players 200 --minutes 30
 ```
+
+`npm run e2e` utilise Playwright s'il est installé (sinon il l'indique et s'arrête). S'il est installé globalement : `NODE_PATH=$(npm root -g) npm run e2e`. Les captures sont écrites dans `e2e-output/` (option `--out`).
+
+| Fichier | Contenu |
+|---|---|
+| `tests/engine.test.ts` | règles de minage, idempotence, limite 5/s, concurrence, persistance |
+| `tests/seasons.test.ts` | fins de saison, champion, Pierre finale, brigades |
+| `tests/integration.test.ts` | WebSocket et HTTP de bout en bout |
+| `tests/security.test.ts` | usurpation, jetons, sessions, limites par IP, messages malformés, doublons, courses, invitations, admin, CSP |
+| `tests/limits.test.ts` | temps actif (rythmes adversariaux, changement de jour, redémarrage), reconnexions |
+| `tests/crash.test.ts` | **SIGKILL réel** du serveur en plein minage, invariants SQLite, reprise complète |
+| `tests/calibration.test.ts` | calibrage et **simulation complète d'une saison de 30 jours** |
+| `tests/migration.test.ts` | migration d'une base au schéma v1 |
 
 ## Comment jouer
 
-- Touchez un bloc de la couche supérieure (ou maintenez le bouton **Miner**, ou la barre d'espace sur ordinateur).
+- Touchez un bloc de la couche supérieure (le toucher est « aimanté » vers le bloc le plus proche), maintenez le bouton **Miner** (fixé en bas de l'écran sur mobile), ou utilisez la barre d'espace sur ordinateur.
 - Chaque coup retire 1 point de résistance ; plus on descend, plus les blocs sont durs.
 - Une couche doit être entièrement détruite pour accéder à la suivante.
-- Le panneau géant au-dessus du cube affiche les meilleurs mineurs de la saison.
-- Onglet **Brigade** : créez une brigade (vous recevez un code d'invitation) ou rejoignez-en une avec un code.
+- Le panneau géant affiche le podium de la saison, la brigade de chacun, les montées au classement (▲), votre position si vous êtes hors du top, l'avancement du cube et l'alerte « Pierre finale en jeu ». Pendant l'intersaison, il honore les titres de la saison écoulée.
+- Onglet **Brigade** : créez une brigade (code d'invitation) ou rejoignez-en une avec un code.
+- Onglet **Profil** : pseudo (unique), apparence, « Déconnecter mes autres appareils » (nouveau jeton), « Abandonner ce compte invité » (révocation).
+
+## Saisons de ~30 jours
+
+```bash
+npm run calibrate -- --days 30 --players 200 --minutes 30
+```
+
+Le script propose `CUBE_SIZE`, `BLOCK_BASE_HP`, `BLOCK_HP_PER_LAYER` et `SEASON_DURATION_HOURS=720` pour que le cube soit fini vers 90 % de la saison (option `--target`), en fonction de la fréquentation estimée. Pendant la saison, `GET /api/season/projection` (et l'onglet *Saisons*) donne le rythme moyen réel et la date de fin estimée.
+
+**Achèvement anticipé** : si le cube est terminé avant l'échéance, la saison se clôt immédiatement (`endReason: completed`). La Pierre finale et le champion sont attribués, et l'avance sur l'échéance est indiquée (`completedEarlyMs`, fenêtre de fin de saison, archives). La saison suivante démarre après `SEASON_COOLDOWN_SECONDS`, avec une nouvelle échéance complète. Si l'échéance arrive avant la fin du cube, la saison se clôt par `timeout` sans Pierre finale.
 
 ## Architecture (résumé)
 
 ```
 the-last-block/
-  shared/       protocole WebSocket typé + catalogue de skins (partagés client/serveur)
+  shared/       protocole WebSocket typé, skins, calibrage (partagés client/serveur)
   server/
     config.ts   variables d'environnement
-    db/         interface GameStore + implémentation SQLite
-    game/       moteur autoritaire (engine.ts), limiteur de débit, temps actif, validations
+    db/         interface GameStore + implémentation SQLite (migrations)
+    game/       moteur autoritaire, limiteur de débit, temps actif, validations
     auth/       comptes invités (jeton haché) + interfaces Google/Apple (non implémentées)
-    net/        serveur HTTP (API, fichiers statiques) + WebSocket
+    net/        HTTP (API, statiques, CSP), WebSocket, adresse IP client
   client/       Vite + TypeScript + Canvas 2D (scene.ts), réseau avec reconnexion (net.ts)
-  tests/        tests unitaires et d'intégration
-  scripts/      dev.mjs, loadtest.ts
-  docs/         ARCHITECTURE.md, DEPLOYMENT.md, SECURITY.md
+  tests/        tests unitaires, d'intégration, de sécurité, de crash
+  scripts/      dev, loadtest, calibrate, e2e-browser
+  docs/         AUDIT, ARCHITECTURE, DEPLOYMENT, SECURITY
 ```
-
-Détails : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Déploiement et charge : [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · Sécurité : [docs/SECURITY.md](docs/SECURITY.md).
 
 ## API HTTP
 
@@ -82,10 +106,11 @@ Détails : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Déploiement et charg
 |---|---|---|
 | GET | `/api/health` | État du serveur |
 | GET | `/api/config` | Règles publiques, skins, paramètres d'association, fournisseurs de connexion |
-| GET | `/api/stats` | Compteurs (connexions, coups acceptés/refusés, mémoire) |
-| GET | `/api/seasons` | Saisons (en cours et archivées) avec champion, brigade, Pierre finale |
-| GET | `/api/seasons/:id` | Classement final archivé d'une saison |
-| POST | `/api/admin/season/start` | Démarre une saison `{name?, cubeSize?, durationHours?}` — `Authorization: Bearer $ADMIN_TOKEN` |
+| GET | `/api/stats` | Compteurs (connexions, refus, coups, mémoire) — à protéger en production |
+| GET | `/api/seasons` | Saisons (en cours et archivées) avec champion, brigade, Pierre finale, avance éventuelle |
+| GET | `/api/seasons/:id` | Classement final archivé |
+| GET | `/api/season/projection` | Avancement et date de fin estimée de la saison en cours |
+| POST | `/api/admin/season/start` | `{name?, cubeSize?, durationHours?, baseHp?, hpPerLayer?}` — `Authorization: Bearer $ADMIN_TOKEN` |
 | POST | `/api/admin/season/end` | Clôture la saison en cours |
 
 ## Fonctionnalités
@@ -93,38 +118,41 @@ Détails : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Déploiement et charg
 ### Terminées et testées automatiquement
 
 **Priorité 1 — vertical slice**
-- [x] Cube commun partagé, plusieurs fenêtres/joueurs minent le même cube (test WebSocket + test navigateur manuel automatisé avec Playwright).
-- [x] Serveur autoritaire : validation de chaque coup (format, limites, couche accessible, bloc vivant). Mise à jour SQL conditionnelle `hp > 0` : un bloc détruit ne peut plus être frappé.
-- [x] Coups concurrents : test avec 20 joueurs × 5 coups simultanés et 6 clients WebSocket en rafale → nombre exact de coups acceptés = PV du bloc, un seul destructeur.
-- [x] Déduplication / idempotence : `actionId` unique par joueur (contrainte SQL), renvoi = résultat d'origine sans double application, y compris après redémarrage du serveur.
-- [x] Temps réel : diffusion des changements par lots de 50 ms, classement chaque seconde, changement de couche diffusé avec un état complet.
-- [x] Reconnexion automatique (backoff + gigue), reprise d'état complète, renvoi des actions non confirmées.
-- [x] Classement de contribution (départage : premier à atteindre le score) et progression de couche.
-- [x] Journal persistant des coups (table `hits`).
-- [x] Interface mobile (bouton « maintenir pour miner », cibles tactiles) et bureau (deux colonnes, clic, barre d'espace).
+- [x] Cube commun, plusieurs joueurs et navigateurs synchronisés (WebSocket + test réel à deux Chromium).
+- [x] Serveur autoritaire ; mise à jour SQL conditionnelle `hp > 0` : un bloc détruit ne peut plus être frappé.
+- [x] Coups concurrents : nombre exact de coups acceptés, un seul destructeur par bloc, une seule Pierre finale.
+- [x] Idempotence par `actionId` (contrainte SQL), y compris après redémarrage et entre sessions simultanées.
+- [x] Temps réel par lots de 50 ms ; reconnexion automatique, reprise d'état, renvoi des actions non confirmées.
+- [x] Classement de contribution, progression de couche, journal persistant des coups.
+- [x] Interface mobile et bureau.
 
 **Priorité 2 — saisons**
-- [x] Création de saisons (automatique ou via l'API admin), compte à rebours, fin par Pierre finale, échéance ou clôture manuelle, délai avant la saison suivante.
-- [x] Archivage : top 100 joueurs et brigades éligibles, consultables dans l'onglet *Saisons*.
-- [x] Champion (contribution), brigade championne (≥ 5 membres), Pierre finale distincte et honorifique.
-- [x] Brigades privées : code d'invitation de 8 caractères, 10 membres max, éligibilité à 5, une brigade par joueur, transfert du rôle de chef, dissolution quand vide, coups attribués à la brigade du moment.
-- [x] Limite de 4 h de minage **actif** par jour, imposée côté serveur et persistée ; seuls les intervalles ≤ 20 s entre deux coups sont comptés ; remise à zéro à minuit UTC.
-- [x] Limite de 5 actions/s par compte (fenêtre glissante exacte, partagée entre les connexions d'un même compte).
-- [x] Panneau géant des meilleurs mineurs au-dessus du cube (Canvas 2D, projection isométrique, sans moteur 3D).
+- [x] Saisons (auto ou admin), compte à rebours, fin par Pierre finale, échéance ou clôture manuelle, délai inter-saison (y compris après redémarrage), archives.
+- [x] Champion, brigade championne (≥ 5 membres), Pierre finale distincte.
+- [x] Brigades privées : code d'invitation, 5 à 10 membres, une brigade par joueur, freinage de la recherche exhaustive de codes.
+- [x] Limite de 4 h de minage **actif** par jour (inactivité au-delà de 5 s non comptée, aucun rythme ne permet de la contourner), persistée et remise à zéro à minuit UTC.
+- [x] Limite de 5 coups/s par compte (toutes sessions, reconnexions comprises).
+- [x] Panneau géant (Canvas 2D, isométrie, sans moteur 3D).
+- [x] Calibrage de saisons de ~30 jours et estimation de fin en direct.
+
+**Sécurité et fiabilité (audit du 4 novembre 2026)**
+- [x] Identité invitée : jeton secret seule preuve, refus explicite des jetons inconnus, rotation et révocation, 4 sessions max par compte.
+- [x] Limites par IP (connexions, créations de comptes), pseudos uniques, limites d'actions de profil, CSP.
+- [x] Reprise après arrêt brutal vérifiée avec SIGKILL réel, y compris entre le dernier coup et la clôture de saison.
 
 **Priorité 3 — préparation**
-- [x] Interfaces Google/Apple (`server/auth/providers.ts`) qui **refusent** toute connexion tant qu'une vérification réelle n'est pas implémentée (pas de fausse sécurité).
-- [x] Skins cosmétiques gratuits (6 couleurs), sans effet sur le gameplay, `price: null` partout.
-- [x] Paramètres d'association configurables, en affichage seul ; aucune transaction.
-- [x] Documentation de déploiement et script de test de charge, avec mesures réelles.
+- [x] Interfaces Google/Apple qui **refusent** toute connexion tant qu'une vérification réelle n'existe pas.
+- [x] Skins cosmétiques gratuits, sans effet de jeu.
+- [x] Paramètres d'association configurables, en affichage seul.
+- [x] Documentation de déploiement, test de charge, calibrage.
 
 ### Incomplètes / non faites
 
-- [ ] Connexion Google / Apple réelle (vérification JWKS, nonce, liaison de compte) : seulement les interfaces.
-- [ ] Protection contre les comptes multiples / robots : un joueur peut créer plusieurs comptes invités et contourner les limites par compte. Nécessite une authentification forte et/ou de l'anti-abus.
-- [ ] Adaptateur PostgreSQL : l'interface `GameStore` est prête, l'implémentation non (voir docs/ARCHITECTURE.md).
-- [ ] Exécution multi-processus / multi-serveurs : le moteur garde l'état en mémoire, prévu pour **un seul processus**.
-- [ ] Fuseau horaire par joueur pour la limite quotidienne (actuellement minuit UTC).
-- [ ] Modération des pseudos / noms de brigade (seuls les caractères sont filtrés).
-- [ ] Magasin cosmétique, notifications, sons, PWA hors ligne, accessibilité approfondie (le cube n'est utilisable qu'à la souris, au toucher ou via le bouton).
-- [ ] Tests de bout en bout du navigateur intégrés à `npm test` (le parcours a été vérifié avec Playwright, mais le script n'est pas versionné dans la suite).
+- [ ] Connexion Google / Apple réelle.
+- [ ] Protection solide contre les comptes multiples et les robots (voir [docs/AUDIT.md](docs/AUDIT.md#3-problèmes-restant-ouverts)).
+- [ ] Adaptateur PostgreSQL et exécution multi-processus.
+- [ ] Fuseau horaire par joueur pour la limite quotidienne (minuit UTC).
+- [ ] Modération des pseudos et détection des homoglyphes entre alphabets.
+- [ ] Zoom sur la couche courante pour les très grands cubes ; navigation clavier bloc par bloc.
+- [ ] Tests sur téléphones physiques, Safari et Firefox.
+- [ ] Magasin cosmétique, notifications, sons, PWA hors ligne.
