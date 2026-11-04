@@ -373,6 +373,7 @@ world.onCameraMove = handleCameraMove;
 world.onTap = handleTap;
 
 function handleTap(wx: number, wy: number, kind: PointerKind) {
+  setCamMenu(false);
   if (!face) return;
   // Toucher indulgent : rayon d'aimantation d'au moins ~22 px ou un demi-bloc.
   const radiusPx = kind === 'touch' ? 22 : 10;
@@ -513,6 +514,14 @@ function recenter() {
   syncWorld();
 }
 $('#recenter').addEventListener('click', recenter);
+// Commandes secondaires regroupées (téléphone) : « ⋯ » ouvre ou ferme le groupe ;
+// ★ et ⚑ le referment après usage, + et − le laissent ouvert pour enchaîner.
+function setCamMenu(open: boolean) {
+  $('#cam-controls').classList.toggle('open', open);
+  $('#cam-more').setAttribute('aria-expanded', String(open));
+}
+$('#cam-more').addEventListener('click', () => setCamMenu(!$('#cam-controls').classList.contains('open')));
+for (const id of ['#board-btn', '#brigade-go']) $(id).addEventListener('click', () => setCamMenu(false));
 new ResizeObserver(() => {
   if (face) world.camera.minZoom = Math.max(5, Math.min(24, world.camera.fitZoom(face.size, face.size) * 0.95));
   minimap.draw();

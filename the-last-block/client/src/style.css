@@ -682,6 +682,17 @@ body[data-renderer='monolith'] .vignette {
   display: none;
 }
 
+/* Commandes secondaires : visibles sur ordinateur, regroupées derrière « ⋯ » sur téléphone. */
+.cam-extra {
+  display: flex;
+  flex-direction: inherit;
+  gap: 6px;
+}
+
+#cam-more {
+  display: none;
+}
+
 .cam-controls button {
   width: 44px;
   height: 44px;
@@ -818,15 +829,65 @@ body[data-renderer='monolith'] .vignette {
 
 @media (max-width: 899px) {
   .layout {
-    padding: 0.4rem 0.4rem 0;
+    padding: 0.3rem 0.4rem 0;
   }
+  /* Barre du haut sur une seule ligne, pour laisser voir l'horizon et le bord du cube. */
   .topbar {
-    padding-top: calc(0.35rem + env(safe-area-inset-top));
-    padding-bottom: 0.35rem;
+    padding-top: calc(0.25rem + env(safe-area-inset-top));
+    padding-bottom: 0.25rem;
+  }
+  .brand > div {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  .topbar h1 {
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+  .logo {
+    width: 20px;
+    height: 20px;
   }
   .menu-btn {
     display: inline-flex;
     align-items: center;
+    min-height: 34px;
+    padding: 0 0.7rem;
+  }
+  /* Bandeau des meilleurs mineurs : une ligne fine et translucide. */
+  .banner {
+    top: 6px;
+    left: 6px;
+    padding: 3px 9px;
+    border-radius: 8px;
+    background: rgba(14, 12, 34, 0.6);
+    box-shadow: none;
+  }
+  .banner-top {
+    font-size: 0.74rem;
+  }
+  .banner-sub {
+    display: none;
+  }
+  .map-box {
+    top: 6px;
+    right: 6px;
+  }
+  .cam-controls {
+    right: 6px;
+    bottom: 6px;
+  }
+  .cam-controls:not(.open) .cam-extra {
+    display: none;
+  }
+  #cam-more {
+    display: block;
+  }
+  .cam-controls.open #cam-more {
+    background: rgba(65, 224, 255, 0.22);
+    border-color: rgba(65, 224, 255, 0.5);
   }
   .status .label {
     display: none;
@@ -901,12 +962,20 @@ body[data-renderer='monolith'] .vignette {
   .chip.extra {
     display: none;
   }
-  #minimap {
-    width: 72px;
-    height: 72px;
-  }
+  /* Le logo suffit à identifier le jeu ; le titre reste lu par les lecteurs d'écran. */
   .topbar h1 {
-    font-size: 0.92rem;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  #minimap {
+    width: 64px;
+    height: 64px;
+  }
+  .coords {
+    font-size: 0.62rem;
   }
 }
 

@@ -195,6 +195,11 @@ try {
   const c3 = await cam(A);
   check('pincer : zoom avant puis arrière, borné', c2.zoom > c1.zoom * 1.5 && c3.zoom < c2.zoom && c2.zoom <= 96, `${c1.zoom.toFixed(0)} → ${c2.zoom.toFixed(0)} → ${c3.zoom.toFixed(0)} px/bloc`);
   const selBeforeZoom = await sel(A);
+  // Téléphone : les commandes secondaires sont regroupées derrière « ⋯ », Miner reste à portée.
+  const camMenu0 = await A.evaluate(() => ({ zoomVisible: !!document.querySelector('#zoom-in').offsetParent, more: !!document.querySelector('#cam-more').offsetParent }));
+  await A.tap('#cam-more');
+  const camMenu1 = await A.evaluate(() => !!document.querySelector('#zoom-in').offsetParent && !!document.querySelector('#board-btn').offsetParent);
+  check('mobile : commandes secondaires regroupées derrière « ⋯ » puis dépliées', camMenu0.more && !camMenu0.zoomVisible && camMenu1, JSON.stringify({ ...camMenu0, ouvert: camMenu1 }));
   await A.tap('#zoom-in');
   await A.waitForTimeout(350);
   check('le zoom conserve la sélection', (await sel(A)) === selBeforeZoom);
@@ -316,6 +321,7 @@ try {
   await B.screenshot({ path: join(OUT, 'bureau-presence.png') });
 
   // 7. Panneau monumental.
+  if (!(await A.evaluate(() => !!document.querySelector('#board-btn').offsetParent))) await A.tap('#cam-more');
   await A.tap('#board-btn');
   await A.waitForTimeout(900);
   const boardState = await A.evaluate(() => ({

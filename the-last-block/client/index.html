@@ -45,13 +45,16 @@
               <canvas id="minimap" aria-label="Mini-carte de la face : toucher pour s'y rendre"></canvas>
               <div class="coords" id="coords">—</div>
             </div>
-            <div class="cam-controls" role="toolbar" aria-label="Caméra">
-              <button type="button" id="zoom-in" title="Zoomer (+)" aria-label="Zoomer">+</button>
-              <button type="button" id="zoom-out" title="Dézoomer (−)" aria-label="Dézoomer">−</button>
-              <button type="button" id="recenter" title="Recentrer sur mon bloc (C)" aria-label="Recentrer sur mon bloc">◎</button>
+            <div class="cam-controls" id="cam-controls" role="toolbar" aria-label="Caméra">
+              <div class="cam-extra" id="cam-extra">
+                <button type="button" id="zoom-in" title="Zoomer (+)" aria-label="Zoomer">+</button>
+                <button type="button" id="zoom-out" title="Dézoomer (−)" aria-label="Dézoomer">−</button>
+                <button type="button" id="board-btn" title="Regarder le panneau (P)" aria-label="Regarder le panneau géant">★</button>
+                <button type="button" id="brigade-go" title="Rejoindre ma brigade (B)" aria-label="Rejoindre ma brigade" hidden>⚑</button>
+              </div>
+              <button type="button" id="cam-more" title="Autres commandes" aria-label="Autres commandes de caméra" aria-controls="cam-extra" aria-expanded="false">⋯</button>
               <button type="button" id="overview-btn" title="Vue d'ensemble du cube (V)" aria-label="Vue d'ensemble du cube">▦</button>
-              <button type="button" id="board-btn" title="Regarder le panneau (P)" aria-label="Regarder le panneau géant">★</button>
-              <button type="button" id="brigade-go" title="Rejoindre ma brigade (B)" aria-label="Rejoindre ma brigade" hidden>⚑</button>
+              <button type="button" id="recenter" title="Recentrer sur mon bloc (C)" aria-label="Recentrer sur mon bloc">◎</button>
             </div>
           </div>
 

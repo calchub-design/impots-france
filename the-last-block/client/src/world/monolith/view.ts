@@ -4,6 +4,7 @@ import { attachGestures, type PointerKind } from '../gestures.js';
 import type { ImpactKind, SurfaceState, WorldLayer } from '../surface.js';
 import type { WorldView } from '../view.js';
 import { ACTIVE_RATE, GLYPHS, PALETTE, RUNE_RATE, VEIN_RATE, css, layerColor, mix, plateNoise, scale, type RGB } from './material.js';
+import { paintHologram, type HoloData } from './hologram.js';
 import { PerspectiveCamera, type Pose, type Vec3 } from './persp.js';
 
 /**
@@ -91,7 +92,8 @@ class Batch {
 const NEAR_CLIP = 0.12;
 const FOG_BUCKETS = 6;
 /** Panneau : largeur relative à l'arête du cube, rapport hauteur/largeur, altitude. */
-const BOARD = { width: 0.72, aspect: 0.36, lift: 0.1, y: -1.5 };
+/** Écran holographique : largeur relative à l'arête du cube, rapport hauteur/largeur, altitude, position (au-delà du bord nord). */
+const BOARD = { width: 1.1, aspect: 0.5, lift: 0.1, y: -2 };
 
 export class MonolithView implements WorldView {
   readonly kind = 'monolith' as const;
@@ -206,7 +208,8 @@ export class MonolithView implements WorldView {
     const key = `${c.cubeSize}|${c.surfaceZ}|${c.viewW}|${c.viewH}`;
     if (key === this.framingKey) return;
     this.framingKey = key;
-    c.frameMonument(c.cubeSize * (BOARD.lift + BOARD.width * BOARD.aspect) * 0.6);
+    // Le cadrage monumental inclut l'écran holographique au-dessus du cube.
+    c.frameMonument(c.cubeSize * (BOARD.lift + BOARD.width * BOARD.aspect) * 0.85);
     c.minZoom = c.monumentalZoom;
     if (c.zoom < c.minZoom) c.zoom = c.minZoom;
   }
@@ -923,65 +926,99 @@ export class MonolithView implements WorldView {
     }
   }
 
+  /** Données de l'écran holographique : celles du panneau + couche courante calculée ici. */
+  private holoData(layer: BillboardLayer): HoloData | null {
+    const d = layer.data;
+    const f = this.state.face;
+    if (!d) return null;
+    let alive = 0;
+    if (f) for (let i = 0; i < f.hp.length; i++) if (f.hp[i] > 0) alive++;
+    return {
+      seasonName: d.seasonName,
+      countdown: d.countdown,
+      top: d.top,
+      brigade: d.brigade,
+      progress: d.progress,
+      layer: f?.layer ?? 0,
+      layers: this.camera.cubeSize,
+      layerLeft: f ? alive / f.hp.length : 1,
+      finalStone: d.finalStone,
+    };
+  }
+
   /**
-   * Panneau du classement, peint dans une texture puis posé comme un plan
-   * vertical au-delà du bord nord, au-dessus du monolithe (transformation
-   * affine : la déformation de perspective résiduelle est négligeable).
-   * Le contenu reste celui du panneau existant (refonte prévue plus tard).
+   * Écran holographique du classement, flottant au-dessus du bord nord du
+   * monolithe. Il pivote pour faire face à la caméra (lisible sous tous les
+   * angles), est projeté par deux faisceaux depuis l'arête du cube, et
+   * s'atténue en vue de minage pour ne jamais masquer la surface.
    */
   private drawBillboard(layer: BillboardLayer, p: Pose, time: number) {
-    if (!layer.data) return;
+    const data = this.holoData(layer);
+    if (!data) return;
     const S = this.camera.cubeSize;
     const H = this.camera.surfaceZ;
     const W = S * BOARD.width;
     const zb = H + S * BOARD.lift;
     const zt = zb + W * BOARD.aspect;
-    const x0 = S / 2 - W / 2;
-    const x1 = S / 2 + W / 2;
-    const TL = this.camera.project(x0, BOARD.y, zt, p);
-    const TR = this.camera.project(x1, BOARD.y, zt, p);
-    const BL = this.camera.project(x0, BOARD.y, zb, p);
+    const cx = S / 2;
+    const cy = BOARD.y;
+    // Axe horizontal de l'écran = axe droit de la caméra : l'écran fait face au regard.
+    const rx = p.r[0];
+    const ry = p.r[1];
+    const TL = this.camera.project(cx - rx * W / 2, cy - ry * W / 2, zt, p);
+    const TR = this.camera.project(cx + rx * W / 2, cy + ry * W / 2, zt, p);
+    const BL = this.camera.project(cx - rx * W / 2, cy - ry * W / 2, zb, p);
     if (!TL || !TR || !BL) return;
-    if (p.c[1] < BOARD.y) return; // vu de dos
     const wpx = Math.hypot(TR[0] - TL[0], TR[1] - TL[1]);
-    if (wpx < 30) return;
+    if (wpx < 40) return;
     const onScreen = Math.max(TL[1], TR[1]) > 0 && Math.min(TL[1], BL[1]) < this.h && Math.max(TL[0], TR[0]) > 0 && Math.min(TL[0], TR[0]) < this.w;
     if (onScreen) this.billboardScreenWidth = wpx;
+    // Présence pleine en vue monumentale, discrète en vue de minage.
+    const t = this.camera.t;
+    const alpha = 0.28 + 0.72 * Math.min(1, t * 1.6);
     const ctx = this.ctx;
-    // Piliers de lumière reliant le panneau au monolithe.
+    // Faisceaux de projection depuis l'arête nord du cube.
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    for (const px of [x0 + W * 0.18, x1 - W * 0.18]) {
-      const a = this.camera.project(px, BOARD.y, H, p);
-      const b = this.camera.project(px, BOARD.y, zb, p);
-      if (!a || !b) continue;
-      const g = ctx.createLinearGradient(a[0], a[1], b[0], b[1]);
-      g.addColorStop(0, 'rgba(65,224,255,0.05)');
-      g.addColorStop(1, 'rgba(65,224,255,0.45)');
-      ctx.strokeStyle = g;
-      ctx.lineWidth = Math.max(1.5, wpx * 0.012);
+    for (const side of [-1, 1]) {
+      const ex = cx + side * W * 0.28;
+      const base = this.camera.project(ex, 0, H, p);
+      const a = this.camera.project(cx + side * (rx * W) / 2, cy + side * (ry * W) / 2, zb, p);
+      const b = this.camera.project(cx + side * (rx * W) * 0.15, cy + side * (ry * W) * 0.15, zb, p);
+      if (!base || !a || !b) continue;
+      const g = ctx.createLinearGradient(base[0], base[1], (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+      g.addColorStop(0, `rgba(65,224,255,${0.32 * alpha})`);
+      g.addColorStop(1, 'rgba(65,224,255,0)');
+      ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.moveTo(a[0], a[1]);
+      ctx.moveTo(base[0], base[1]);
+      ctx.lineTo(a[0], a[1]);
       ctx.lineTo(b[0], b[1]);
-      ctx.stroke();
+      ctx.closePath();
+      ctx.fill();
+      // Émetteur
+      const er = Math.max(2, wpx * 0.012);
+      const eg = ctx.createRadialGradient(base[0], base[1], 0, base[0], base[1], er * 4);
+      eg.addColorStop(0, `rgba(180,245,255,${0.9 * alpha})`);
+      eg.addColorStop(1, 'rgba(65,224,255,0)');
+      ctx.fillStyle = eg;
+      ctx.fillRect(base[0] - er * 4, base[1] - er * 4, er * 8, er * 8);
     }
     ctx.restore();
-    // Texture du panneau (résolution adaptée à sa taille à l'écran).
-    const cw = Math.max(320, Math.min(1100, Math.round(wpx * this.dpr)));
+    // Texture (résolution adaptée à la taille à l'écran ; repeinte 4 fois/s au plus).
+    const cw = Math.max(360, Math.min(1200, Math.round(wpx * this.dpr)));
     const ch = Math.round(cw * BOARD.aspect);
     const bc = this.boardCanvas;
     if (bc.width !== cw || bc.height !== ch) {
       bc.width = cw;
       bc.height = ch;
+      this.boardKey = '';
     }
-    // Texture repeinte seulement si le contenu change (ou 4 fois/s pour les ampoules).
     const tick = this.reducedMotion ? 0 : Math.floor(time / 250);
-    const bkey = `${cw}|${tick}|${JSON.stringify(layer.data)}`;
+    const bkey = `${cw}|${tick}|${JSON.stringify(data)}`;
     if (bkey !== this.boardKey) {
       this.boardKey = bkey;
-      const bctx = bc.getContext('2d')!;
-      bctx.clearRect(0, 0, cw, ch);
-      layer.paintPanel(bctx, 0, 0, cw, ch, time);
+      paintHologram(bc.getContext('2d')!, cw, ch, data, time, this.reducedMotion);
     }
     ctx.save();
     ctx.setTransform(
@@ -992,7 +1029,24 @@ export class MonolithView implements WorldView {
       this.dpr * TL[0],
       this.dpr * TL[1],
     );
-    ctx.globalAlpha = 0.95;
+    // Voile sombre sous la lumière : garde le texte lisible devant le cube.
+    ctx.globalAlpha = 0.5 * alpha;
+    ctx.fillStyle = '#060a1e';
+    ctx.beginPath();
+    const k = ch * 0.07;
+    ctx.moveTo(k, ch * 0.01);
+    ctx.lineTo(cw - k, ch * 0.01);
+    ctx.lineTo(cw * 0.995, k);
+    ctx.lineTo(cw * 0.995, ch - k);
+    ctx.lineTo(cw - k, ch * 0.99);
+    ctx.lineTo(k, ch * 0.99);
+    ctx.lineTo(cw * 0.005, ch - k);
+    ctx.lineTo(cw * 0.005, k);
+    ctx.closePath();
+    ctx.fill();
+    // Hologramme : lumière ajoutée, léger scintillement.
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = alpha * (this.reducedMotion ? 1 : 0.94 + 0.06 * Math.sin(time / 90));
     ctx.drawImage(bc, 0, 0);
     ctx.restore();
   }
