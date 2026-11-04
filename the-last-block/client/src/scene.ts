@@ -519,7 +519,9 @@ export class Scene {
     const me = this.data.me;
     const meVisible = entries.some((e) => e.playerId === this.data.myId);
     const showMeLine = !!me && me.rank !== null && !meVisible && entries.length > 0;
-    const avail = listBottom - listTop - (showMeLine ? 20 : 0);
+    // Espace réservé à « ma » ligne (séparateur + ligne de 16 px), sans chevaucher le pied.
+    const ME_LINE_H = 30;
+    const avail = listBottom - listTop - (showMeLine ? ME_LINE_H : 0);
     const twoCols = wide && entries.length > 5;
     const rowH = Math.max(16, Math.min(24, avail / (twoCols ? 5 : Math.min(5, Math.max(entries.length, 1)))));
     const fitRows = Math.max(1, Math.floor(avail / rowH));
@@ -570,12 +572,12 @@ export class Scene {
       this.drawRow(e.rank, e.name, e.skin, e.hits, e.brigadeName, x, cy, colW, rowH, e.hits / top, e.playerId === this.data.myId, this.rankUpAt.get(e.playerId), now);
     });
     if (showMeLine && me) {
-      const cy = listTop + Math.min(perCol, shown.length) * rowH + 10;
+      const base = listTop + Math.min(perCol, shown.length) * rowH;
       ctx.fillStyle = '#8c86b0';
       ctx.textAlign = 'center';
       ctx.font = `700 10px system-ui, sans-serif`;
-      ctx.fillText('• • •', bx + bw / 2, cy - 6);
-      this.drawRow(me.rank!, me.name, me.skin, me.hits, null, left, cy + 8, twoCols ? colW : right - left, 18, me.hits / top, true, undefined, now);
+      ctx.fillText('• • •', bx + bw / 2, base + 6);
+      this.drawRow(me.rank!, me.name, me.skin, me.hits, null, left, base + 20, twoCols ? colW : right - left, 16, me.hits / top, true, undefined, now);
     }
   }
 
