@@ -65,7 +65,7 @@ export interface SeasonProjection {
   hitsDone: number;
   remainingHits: number;
   avgHitsPerHour: number;
-  /** Rythme sur la dernière heure (en mémoire : repart de zéro au redémarrage). */
+  /** Rythme sur la dernière heure, indicatif (en mémoire : repart de zéro au redémarrage). */
   recentHitsPerHour: number;
   projectedCompletionAt: number | null;
   endsAt: number;

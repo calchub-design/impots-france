@@ -564,7 +564,10 @@ export class GameEngine {
     for (const [k, v] of this.hitBuckets) if (k > minute - 60) recent += v;
     const recentMinutes = Math.min(60, Math.max(1, Math.ceil(elapsed / 60_000)));
     const recentHitsPerHour = (recent / recentMinutes) * 60;
-    const rate = recentHitsPerHour > 0 ? recentHitsPerHour : avgHitsPerHour;
+    // Moyenne depuis le début de saison : robuste aux cycles jour/nuit et
+    // recalculée depuis la base après un redémarrage. Le rythme de la
+    // dernière heure n'est fourni qu'à titre indicatif.
+    const rate = avgHitsPerHour;
     const projectedCompletionAt = rate > 0 ? Math.round(now + (st.remainingHp / rate) * 3600_000) : null;
     return {
       totalHits: st.totalHp,
