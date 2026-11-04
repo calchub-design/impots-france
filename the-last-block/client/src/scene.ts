@@ -1,5 +1,6 @@
 import type { CubeSnapshot, LeaderboardEntry, SeasonInfo } from '../../shared/protocol.js';
 import { skinById } from '../../shared/skins.js';
+import { shade, strataColor } from './world/palette.js';
 
 /**
  * Scène 2D (Canvas, sans moteur 3D) : un panneau géant des meilleurs mineurs
@@ -43,22 +44,6 @@ export interface SceneData {
 
 const REDUCED_MOTION = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-// Palette de strates : du sable en surface à la roche profonde puis au cœur doré.
-const STRATA = ['#c9a36b', '#b48a5a', '#9c7a58', '#866b55', '#6f5d55', '#5c5260', '#4b4766', '#3f3d6e', '#383677', '#4a3a86'];
-
-function strataColor(layer: number, size: number): string {
-  const t = size <= 1 ? 0 : layer / (size - 1);
-  return STRATA[Math.min(STRATA.length - 1, Math.round(t * (STRATA.length - 1)))];
-}
-
-function shade(hex: string, f: number): string {
-  const n = parseInt(hex.slice(1), 16);
-  const r = Math.max(0, Math.min(255, Math.round(((n >> 16) & 255) * f)));
-  const g = Math.max(0, Math.min(255, Math.round(((n >> 8) & 255) * f)));
-  const b = Math.max(0, Math.min(255, Math.round((n & 255) * f)));
-  return `rgb(${r},${g},${b})`;
-}
-
 export class Scene {
   private ctx: CanvasRenderingContext2D;
   private w = 0;
@@ -82,9 +67,13 @@ export class Scene {
   private th = 0;
   private lh = 0;
 
+  private active = true;
+  private rafId = 0;
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly onPick: (block: number) => void,
+    private readonly opts: { billboard: boolean } = { billboard: true },
   ) {
     this.ctx = canvas.getContext('2d')!;
     new ResizeObserver(() => this.resize()).observe(canvas);
@@ -100,11 +89,24 @@ export class Scene {
       if (e.pointerType === 'mouse') this.hover = this.pick(e.offsetX, e.offsetY);
     });
     canvas.addEventListener('pointerleave', () => (this.hover = null));
-    const loop = () => {
-      this.draw();
-      requestAnimationFrame(loop);
-    };
-    requestAnimationFrame(loop);
+    this.setActive(true);
+  }
+
+  /** Démarre ou suspend la boucle de dessin (vue masquée = aucun calcul). */
+  setActive(on: boolean) {
+    this.active = on;
+    if (on && !this.rafId) {
+      const loop = () => {
+        if (!this.active) {
+          this.rafId = 0;
+          return;
+        }
+        this.draw();
+        this.rafId = requestAnimationFrame(loop);
+      };
+      this.resize();
+      this.rafId = requestAnimationFrame(loop);
+    }
   }
 
   private resize() {
@@ -121,7 +123,7 @@ export class Scene {
   private layout() {
     const size = this.data.cube?.size ?? 10;
     // Sur mobile le panneau prend une part plus grande : 5 lignes lisibles.
-    const boardH = this.w > 480 ? Math.min(this.h * 0.36, 250) : Math.min(this.h * 0.44, 200);
+    const boardH = !this.opts.billboard ? 0 : this.w > 480 ? Math.min(this.h * 0.36, 250) : Math.min(this.h * 0.44, 200);
     const availH = this.h - boardH - 24;
     const availW = this.w - 24;
     // Le cube complet occupe une boîte de largeur size*tw et de hauteur size*tw.
@@ -226,7 +228,7 @@ export class Scene {
 
     const { boardH } = this.layout();
     this.drawGround();
-    this.drawBillboard(boardH, time);
+    if (this.opts.billboard) this.drawBillboard(boardH, time);
     this.drawCube(now);
     this.drawEffects();
 

@@ -15,6 +15,10 @@ import type {
 import { SKINS, skinById } from '../../shared/skins.js';
 import { GameSocket, type ConnState } from './net.js';
 import { Scene } from './scene.js';
+import { TILT } from './world/camera.js';
+import { nearestAlive, toXY, type FaceData } from './world/face.js';
+import { Minimap } from './world/minimap.js';
+import { SurfaceView } from './world/surface.js';
 
 // ---------------------------------------------------------------------------
 // État client (toujours dérivé des messages du serveur)
@@ -75,19 +79,234 @@ const profile = (params.get('profil') ?? params.get('profile') ?? 'default').rep
 // Scène et réseau
 // ---------------------------------------------------------------------------
 
-const scene = new Scene($<HTMLCanvasElement>('#scene'), (block) => {
-  state.selected = block;
-  mineSelected();
+// ---------------------------------------------------------------------------
+// Surface de minage navigable (face « top » = dessus de la couche courante)
+// ---------------------------------------------------------------------------
+
+const world = new SurfaceView($<HTMLCanvasElement>('#world'));
+const minimap = new Minimap($<HTMLCanvasElement>('#minimap'), world.camera, (wx, wy, final) => {
+  world.camera.animateTo({ x: wx, y: wy }, final ? 250 : 0);
+  world.requestRender();
+  saveCamera();
 });
+/** Coups envoyés, en attente de confirmation : actionId → bloc. */
+const pendingHits = new Map<string, { block: number; at: number }>();
+let face: FaceData | null = null;
+let cameraReady = false;
+
+const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+world.reducedMotion = reducedMotion;
+world.camera.inertia = !reducedMotion;
+
+function storageGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function storageSet(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* stockage indisponible */
+  }
+}
+function lowFxPref(): boolean {
+  return storageGet('tlb.lowfx') === '1';
+}
+world.lowFx = lowFxPref();
+
+const camKey = () => `tlb.cam.${profile}.${state.season?.id ?? 0}`;
+let camSaveTimer = 0;
+function saveCamera() {
+  clearTimeout(camSaveTimer);
+  camSaveTimer = window.setTimeout(() => {
+    const c = world.camera;
+    storageSet(camKey(), JSON.stringify({ x: c.x, y: c.y, zoom: c.zoom }));
+  }, 400);
+}
+
+function defaultZoom(): number {
+  const c = world.camera;
+  return Math.max(c.minZoom, Math.min(c.maxZoom, Math.min(52, Math.max(30, Math.min(c.viewW, c.viewH) / 9))));
+}
+
+/** Reconstruit la face à partir de l'état serveur. `reset` : nouvelle saison / première connexion. */
+function applyCube(reset: boolean) {
+  const cube = state.cube;
+  if (!cube || cube.currentLayer >= cube.size) {
+    face = null;
+    world.setState({ face: null });
+    minimap.face = null;
+    minimap.draw();
+    return;
+  }
+  face = {
+    faceId: 'top',
+    size: cube.size,
+    layer: cube.currentLayer,
+    maxHp: cube.layerMaxHp[cube.currentLayer] ?? 1,
+    hp: cube.currentHp,
+  };
+  const cam = world.camera;
+  cam.setBounds({ minX: 0, maxX: cube.size, minY: 0, maxY: cube.size });
+  cam.minZoom = Math.max(5, Math.min(24, cam.fitZoom(cube.size, cube.size) * 0.95));
+  cam.maxZoom = 96;
+  if (reset || !cameraReady) {
+    let restored = false;
+    try {
+      const saved = JSON.parse(storageGet(camKey()) ?? 'null') as { x: number; y: number; zoom: number } | null;
+      if (saved && [saved.x, saved.y, saved.zoom].every(Number.isFinite)) {
+        cam.animateTo(saved, 0);
+        restored = true;
+      }
+    } catch {
+      /* position illisible : ignorée */
+    }
+    if (!restored) cam.animateTo({ x: cube.size / 2, y: cube.size / 2, zoom: defaultZoom() }, 0);
+    cameraReady = true;
+  }
+  // Sélection : conservée si le bloc vit encore, sinon le bloc vivant le plus proche.
+  if (state.selected === null || !(cube.currentHp[state.selected] > 0)) {
+    const from = state.selected !== null ? toXY(state.selected, cube.size) : null;
+    state.selected = from ? nearestAlive(face, from.x + 0.5, from.y + 0.5) : nearestAlive(face, cam.x, cam.y);
+  }
+  minimap.face = face;
+  minimap.cubeSize = cube.size;
+  minimap.version++;
+  syncWorld();
+}
+
+function syncWorld() {
+  world.setState({
+    face,
+    cubeSize: state.cube?.size ?? 1,
+    selected: state.selected,
+    pending: new Set([...pendingHits.values()].map((p) => p.block)),
+    offline: $('#conn-status').dataset.state !== 'online' && cameraReady,
+    message: !state.season ? 'Intersaison — le prochain cube arrive bientôt' : null,
+  });
+  minimap.selected = state.selected;
+  minimap.draw();
+  updateCoords();
+}
+
+function updateCoords() {
+  const c = world.camera;
+  $('#coords').textContent = face ? `x ${Math.floor(c.x)} · y ${Math.floor(c.y)} / ${face.size}` : '—';
+}
+
+world.onCameraMove = () => {
+  minimap.draw();
+  updateCoords();
+  saveCamera();
+};
+
+world.onTap = (wx, wy, kind) => {
+  if (!face) return;
+  // Toucher indulgent : rayon d'aimantation d'au moins ~22 px ou un demi-bloc.
+  const radiusPx = kind === 'touch' ? 22 : 10;
+  const zoom = world.camera.zoom;
+  const x = Math.floor(wx);
+  const y = Math.floor(wy);
+  let idx: number | null = null;
+  if (x >= 0 && y >= 0 && x < face.size && y < face.size && face.hp[y * face.size + x] > 0) idx = y * face.size + x;
+  else {
+    const cand = nearestAlive(face, wx, wy, Math.max(1, Math.ceil(radiusPx / zoom) + 1));
+    if (cand !== null) {
+      const p = toXY(cand, face.size);
+      const d = Math.hypot((p.x + 0.5 - wx) * zoom, (p.y + 0.5 - wy) * zoom * TILT);
+      if (d <= Math.max(radiusPx, zoom * 0.75)) idx = cand;
+    }
+  }
+  if (idx === null) return;
+  state.selected = idx;
+  syncWorld();
+};
+
+/** Amène un bloc dans la vue s'il en est sorti (sans changer le zoom). */
+function ensureVisible(idx: number) {
+  if (!face) return;
+  const { x, y } = toXY(idx, face.size);
+  const v = world.camera.visibleWorld();
+  const m = 1;
+  if (x < v.minX + m || x + 1 > v.maxX - m || y < v.minY + m || y + 1 > v.maxY - m) {
+    world.camera.animateTo({ x: x + 0.5, y: y + 0.5 }, 300);
+    world.requestRender();
+  }
+}
+
+// Vue d'ensemble : l'ancienne vue isométrique du cube entier, réutilisée.
+const overview = new Scene(
+  $<HTMLCanvasElement>('#overview-canvas'),
+  (block) => {
+    closeOverview();
+    if (!face || !(face.hp[block] > 0)) return;
+    state.selected = block;
+    const { x, y } = toXY(block, face.size);
+    world.camera.animateTo({ x: x + 0.5, y: y + 0.5, zoom: defaultZoom() }, 450);
+    syncWorld();
+  },
+  { billboard: false },
+);
+overview.setActive(false);
+function openOverview() {
+  $('#overview').hidden = false;
+  overview.data = {
+    cube: state.cube,
+    leaderboard: [],
+    myId: null,
+    me: null,
+    seasonName: state.season?.name ?? '',
+    countdown: '',
+    selected: state.selected,
+    message: state.cube ? null : 'Intersaison',
+  };
+  overview.setActive(true);
+  $('#overview-close').focus();
+}
+function closeOverview() {
+  $('#overview').hidden = true;
+  overview.setActive(false);
+}
+$('#overview-btn').addEventListener('click', openOverview);
+$('#overview-close').addEventListener('click', closeOverview);
+$('#overview').addEventListener('click', (e) => e.target === $('#overview') && closeOverview());
+
+$('#zoom-in').addEventListener('click', () => {
+  world.camera.animateTo({ zoom: world.camera.zoom * 1.4 }, reducedMotion ? 0 : 200);
+  world.requestRender();
+});
+$('#zoom-out').addEventListener('click', () => {
+  world.camera.animateTo({ zoom: world.camera.zoom / 1.4 }, reducedMotion ? 0 : 200);
+  world.requestRender();
+});
+function recenter() {
+  if (!face) return;
+  const target = state.selected !== null && face.hp[state.selected] > 0 ? state.selected : nearestAlive(face, world.camera.x, world.camera.y);
+  if (target === null) return;
+  state.selected = target;
+  const { x, y } = toXY(target, face.size);
+  world.camera.animateTo({ x: x + 0.5, y: y + 0.5, zoom: defaultZoom() }, reducedMotion ? 0 : 450);
+  syncWorld();
+}
+$('#recenter').addEventListener('click', recenter);
+new ResizeObserver(() => {
+  if (face) world.camera.minZoom = Math.max(5, Math.min(24, world.camera.fitZoom(face.size, face.size) * 0.95));
+  minimap.draw();
+}).observe($('#viewport'));
 
 const socket = new GameSocket(profile, onMessage, onConnState, (text) => toast(text, 'info'));
-socket.connect();
 
 function onConnState(s: ConnState) {
   const node = $('#conn-status');
   node.dataset.state = s;
   node.querySelector('.label')!.textContent =
     s === 'online' ? 'Connecté' : s === 'connecting' ? 'Connexion…' : s === 'replaced' ? 'Ouvert ailleurs — toucher pour reprendre' : 'Reconnexion…';
+  node.title = node.querySelector('.label')!.textContent ?? '';
+  if (s !== 'online') stopHold?.();
+  syncWorld();
 }
 $('#conn-status').addEventListener('click', () => {
   if ($('#conn-status').dataset.state === 'replaced') socket.restart();
@@ -106,8 +325,13 @@ function setHp(layer: number, block: number, hp: number): boolean {
   if (hp === 0) {
     cube.layerRemaining[layer]--;
     cube.destroyedBlocks++;
-    if (state.selected === block) state.selected = null;
+    // Bloc sélectionné détruit : la sélection passe au bloc vivant le plus proche.
+    if (state.selected === block && face) {
+      const { x, y } = toXY(block, cube.size);
+      state.selected = nearestAlive(face, x + 0.5, y + 0.5, 8);
+    }
   }
+  minimap.version++;
   return true;
 }
 
@@ -127,15 +351,17 @@ function onMessage(msg: ServerMessage) {
       state.online = msg.online;
       state.clockOffset = msg.serverTime - Date.now();
       state.projection = msg.projection;
-      if (state.selected !== null && !(msg.cube && msg.cube.currentHp[state.selected] > 0)) state.selected = null;
       if (!msg.season) loadSeasons(); // intersaison : récupère la saison écoulée pour le panneau
+      applyCube(face === null || face.size !== msg.cube?.size || lastSeasonId !== msg.season?.id);
+      lastSeasonId = msg.season?.id ?? null;
       renderAll();
       break;
     case 'delta':
       if (!state.season || msg.seasonId !== state.season.id || msg.seq <= state.seq) return;
       state.seq = msg.seq;
       for (const [layer, block, hp] of msg.updates) {
-        if (setHp(layer, block, hp)) scene.hitEffect(block, hp === 0, '#e8dcc0');
+        // Coups des autres (ou les miens déjà affichés : setHp renvoie alors faux).
+        if (setHp(layer, block, hp)) world.impact(block, hp === 0 ? 'otherDestroyed' : 'other');
       }
       renderHud();
       break;
@@ -143,15 +369,22 @@ function onMessage(msg: ServerMessage) {
       if (!state.season || msg.seasonId !== state.season.id) return;
       state.seq = msg.seq;
       state.cube = msg.cube;
-      state.selected = null;
+      pendingHits.clear();
+      applyCube(false);
       toast(`Couche ${msg.cube.currentLayer + 1} atteinte !`, 'good');
       renderHud();
       break;
     case 'mineResult':
+      {
+        const sent = pendingHits.get(msg.actionId);
+        pendingHits.delete(msg.actionId);
+        if (!msg.ok && sent) world.impact(sent.block, 'refused');
+      }
       if (msg.ok) {
         if (msg.layer !== undefined && msg.block !== undefined && msg.hpAfter !== undefined) {
           setHp(msg.layer, msg.block, msg.hpAfter);
-          if (!msg.duplicate) scene.hitEffect(msg.block, !!msg.destroyed, myColor(), msg.destroyed ? '+1 bloc !' : '+1');
+          // Effet uniquement APRÈS confirmation du serveur.
+          if (!msg.duplicate && msg.layer === state.cube?.currentLayer) world.impact(msg.block, msg.destroyed ? 'destroyed' : 'confirmed', myColor());
           if (msg.destroyed && !msg.duplicate) haptic(12);
         }
         if (msg.me) state.me = msg.me;
@@ -211,7 +444,10 @@ const REJECT_TEXT: Record<MineRejectReason, string> = {
 let lastRejectToast = 0;
 function rejectFeedback(reason: MineRejectReason | undefined, retryAfterMs?: number) {
   if (!reason) return;
-  if (reason === 'already_destroyed') state.selected = null;
+  if (reason === 'already_destroyed' && face && state.selected !== null && !(face.hp[state.selected] > 0)) {
+    const { x, y } = toXY(state.selected, face.size);
+    state.selected = nearestAlive(face, x + 0.5, y + 0.5, 8);
+  }
   const now = Date.now();
   if (now - lastRejectToast < 1500 && reason !== 'daily_limit') return;
   lastRejectToast = now;
@@ -227,15 +463,16 @@ function rejectFeedback(reason: MineRejectReason | undefined, retryAfterMs?: num
 // Minage
 // ---------------------------------------------------------------------------
 
+/** Bloc visé : la sélection si elle vit encore, sinon le bloc vivant le plus proche (de la sélection ou du centre de la vue). */
 function pickTarget(): number | null {
-  const cube = state.cube;
-  if (!cube || cube.currentLayer >= cube.size) return null;
-  if (state.selected !== null && cube.currentHp[state.selected] > 0) return state.selected;
-  // Choix d'un bloc vivant, de préférence voisin de la sélection précédente.
-  const alive: number[] = [];
-  cube.currentHp.forEach((hp, i) => hp > 0 && alive.push(i));
-  if (alive.length === 0) return null;
-  return alive[Math.floor(Math.random() * alive.length)];
+  if (!face) return null;
+  if (state.selected !== null && face.hp[state.selected] > 0) return state.selected;
+  if (state.selected !== null) {
+    const { x, y } = toXY(state.selected, face.size);
+    const near = nearestAlive(face, x + 0.5, y + 0.5, 8);
+    if (near !== null) return near;
+  }
+  return nearestAlive(face, world.camera.x, world.camera.y);
 }
 
 function mineSelected() {
@@ -248,12 +485,23 @@ function mineSelected() {
   const target = pickTarget();
   if (target === null) return;
   state.selected = target;
+  ensureVisible(target);
+  // Aucun effet d'impact ici : seulement l'état « en attente » jusqu'à la réponse du serveur.
   const id = socket.mine(cube.currentLayer, target);
-  if (id) scene.hitEffect(target, false, myColor());
+  if (id) pendingHits.set(id, { block: target, at: Date.now() });
+  syncWorld();
 }
+// Nettoyage des attentes orphelines (réponse perdue lors d'une coupure longue).
+setInterval(() => {
+  const now = Date.now();
+  let changed = false;
+  for (const [id, p] of pendingHits) if (now - p.at > 15_000) changed = pendingHits.delete(id) || changed;
+  if (changed) syncWorld();
+}, 3000);
 
 const mineBtn = $<HTMLButtonElement>('#mine-btn');
 let holdTimer: number | null = null;
+let lastSeasonId: number | null = null;
 function startHold(e: Event) {
   e.preventDefault();
   mineSelected();
@@ -271,12 +519,101 @@ mineBtn.addEventListener('pointerdown', startHold);
 for (const ev of ['pointerup', 'pointerleave', 'pointercancel', 'blur'] as const) mineBtn.addEventListener(ev, stopHold);
 window.addEventListener('blur', stopHold);
 document.addEventListener('visibilitychange', () => document.hidden && stopHold());
-for (const n of [mineBtn, $('#scene')]) n.addEventListener('contextmenu', (e) => e.preventDefault());
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'Space' && !(e.target instanceof HTMLInputElement) && !e.repeat) {
-    e.preventDefault();
-    mineSelected();
+for (const n of [mineBtn, $('#world'), $('#minimap')]) n.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Clavier : déplacement (flèches, ZQSD, WASD), zoom (+/−), C recentrer, V vue d'ensemble, Espace miner.
+const PAN_KEYS: Record<string, [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+  KeyA: [-1, 0],
+  KeyQ: [-1, 0],
+  KeyD: [1, 0],
+  KeyW: [0, -1],
+  KeyZ: [0, -1],
+  KeyS: [0, 1],
+};
+const held = new Set<string>();
+function updateKeyPan() {
+  let x = 0;
+  let y = 0;
+  for (const k of held) {
+    x += PAN_KEYS[k][0];
+    y += PAN_KEYS[k][1];
   }
+  const speed = 700; // px/s
+  world.keyPan = { x: Math.sign(x) * speed, y: Math.sign(y) * speed };
+  world.requestRender();
+}
+function typing(e: KeyboardEvent) {
+  return e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.altKey || e.ctrlKey || e.metaKey;
+}
+window.addEventListener('keydown', (e) => {
+  if (typing(e)) return;
+  if (e.key === 'Escape') {
+    closeOverview();
+    closePanel();
+    return;
+  }
+  if (!$('#overview').hidden || panelOpen()) return;
+  if (e.code === 'Space' || e.code === 'Enter') {
+    if (e.target instanceof HTMLButtonElement && e.code === 'Enter') return;
+    e.preventDefault();
+    if (!e.repeat) mineSelected();
+  } else if (PAN_KEYS[e.code]) {
+    e.preventDefault();
+    held.add(e.code);
+    updateKeyPan();
+  } else if (e.key === '+' || e.key === '=') {
+    world.camera.zoomAt(1.25);
+    world.requestRender();
+  } else if (e.key === '-' || e.key === '_') {
+    world.camera.zoomAt(0.8);
+    world.requestRender();
+  } else if (e.code === 'KeyC') recenter();
+  else if (e.code === 'KeyV') openOverview();
+});
+window.addEventListener('keyup', (e) => {
+  if (held.delete(e.code)) updateKeyPan();
+});
+window.addEventListener('blur', () => {
+  held.clear();
+  updateKeyPan();
+});
+
+// Tiroir des panneaux (mobile)
+const panel = $('#panel');
+function panelOpen() {
+  return panel.classList.contains('open');
+}
+function openPanel(tab?: string) {
+  panel.classList.add('open');
+  $('#backdrop').hidden = false;
+  $('#menu-btn').setAttribute('aria-expanded', 'true');
+  if (tab) document.querySelector<HTMLButtonElement>(`.tabs button[data-tab="${tab}"]`)?.click();
+}
+function closePanel() {
+  panel.classList.remove('open');
+  $('#backdrop').hidden = true;
+  $('#menu-btn').setAttribute('aria-expanded', 'false');
+}
+$('#menu-btn').addEventListener('click', () => (panelOpen() ? closePanel() : openPanel()));
+$('#panel-close').addEventListener('click', closePanel);
+$('#backdrop').addEventListener('click', closePanel);
+
+// Les notifications restent au-dessus de la barre d'action.
+new ResizeObserver(() => {
+  const h = $('.actionbar').getBoundingClientRect().height;
+  document.documentElement.style.setProperty('--toast-bottom', `${Math.round(h + 12)}px`);
+}).observe($('.actionbar'));
+
+const lowFxBox = $<HTMLInputElement>('#low-fx');
+lowFxBox.checked = world.lowFx;
+lowFxBox.addEventListener('change', () => {
+  world.lowFx = lowFxBox.checked;
+  storageSet('tlb.lowfx', world.lowFx ? '1' : '0');
+  world.resize();
 });
 
 // ---------------------------------------------------------------------------
@@ -323,18 +660,9 @@ function renderHud() {
     ? 'Limite quotidienne atteinte'
     : !state.season
       ? 'En attente de la prochaine saison'
-      : 'Touchez un bloc ou maintenez ce bouton';
-  scene.data = {
-    cube: state.cube,
-    leaderboard: state.leaderboard,
-    myId: state.player?.id ?? null,
-    me: state.player ? { name: state.player.name, skin: state.player.skin, rank: state.me.rank, hits: state.me.hits } : null,
-    seasonName: state.season?.name ?? '',
-    countdown: countdownText(),
-    selected: state.selected,
-    message: !state.season ? 'Intersaison — le prochain cube arrive bientôt' : null,
-    lastSeason: state.lastEnded,
-  };
+      : 'Touchez un bloc pour le choisir, puis Miner (maintenir = continu)';
+  if (!$('#overview').hidden) overview.data = { ...overview.data, cube: state.cube, selected: state.selected };
+  syncWorld();
 }
 
 function renderBoards() {
@@ -576,7 +904,6 @@ function countdownText(): string {
 setInterval(() => {
   const text = countdownText();
   $('#countdown').textContent = text;
-  scene.data.countdown = text;
 }, 500);
 
 function haptic(ms: number) {
@@ -624,4 +951,7 @@ fetch('/api/config')
   .catch(() => {});
 
 // Exposé pour le débogage manuel dans la console.
-(window as unknown as { tlb: unknown }).tlb = { state, socket };
+(window as unknown as { tlb: unknown }).tlb = { state, socket, world, minimap };
+
+// Connexion en dernier : toute l'interface est initialisée.
+socket.connect();

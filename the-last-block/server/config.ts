@@ -76,7 +76,8 @@ function str(env: Env, key: string, def: string): string {
 }
 
 export const DEFAULT_RULES: GameRules = {
-  cubeSize: 10,
+  // 32 × 32 blocs par couche : une surface bien plus grande que l'écran (refonte « cube colossal »).
+  cubeSize: 32,
   baseHp: 3,
   hpPerLayer: 1,
   seasonDurationMs: 7 * 24 * 3600_000,

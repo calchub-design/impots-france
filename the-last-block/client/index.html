@@ -21,20 +21,30 @@
         <div class="status" id="conn-status" data-state="connecting" title="État de la connexion">
           <span class="dot"></span><span class="label">Connexion…</span>
         </div>
+        <button type="button" class="menu-btn" id="menu-btn" aria-controls="panel" aria-expanded="false">☰ Menu</button>
       </header>
 
       <main class="layout">
         <section class="stage">
-          <div class="canvas-wrap">
-            <canvas id="scene" aria-label="Le cube commun et le panneau des meilleurs mineurs"></canvas>
-          </div>
-
-          <div class="hud">
-            <div class="hud-item"><span class="k">Couche</span><span class="v" id="hud-layer">—</span></div>
-            <div class="hud-item"><span class="k">Cube</span><span class="v" id="hud-progress">—</span></div>
-            <div class="hud-item"><span class="k">Coups</span><span class="v" id="hud-hits">0</span></div>
-            <div class="hud-item"><span class="k">Rang</span><span class="v" id="hud-rank">—</span></div>
-            <div class="hud-item"><span class="k">En ligne</span><span class="v" id="hud-online">—</span></div>
+          <div class="viewport" id="viewport">
+            <canvas id="world" tabindex="0" aria-label="Surface de minage : glisser pour se déplacer, toucher un bloc pour le sélectionner, Miner pour le frapper"></canvas>
+            <div class="chips">
+              <span class="chip">couche <b id="hud-layer">—</b></span>
+              <span class="chip"><b id="hud-progress">—</b> miné</span>
+              <span class="chip">rang <b id="hud-rank">—</b></span>
+              <span class="chip extra"><b id="hud-hits">0</b> coups</span>
+              <span class="chip extra"><b id="hud-online">—</b> en ligne</span>
+            </div>
+            <div class="map-box">
+              <canvas id="minimap" aria-label="Mini-carte de la face : toucher pour s'y rendre"></canvas>
+              <div class="coords" id="coords">—</div>
+            </div>
+            <div class="cam-controls" role="toolbar" aria-label="Caméra">
+              <button type="button" id="zoom-in" title="Zoomer (+)" aria-label="Zoomer">+</button>
+              <button type="button" id="zoom-out" title="Dézoomer (−)" aria-label="Dézoomer">−</button>
+              <button type="button" id="recenter" title="Recentrer sur mon bloc (C)" aria-label="Recentrer sur mon bloc">◎</button>
+              <button type="button" id="overview-btn" title="Vue d'ensemble du cube (V)" aria-label="Vue d'ensemble du cube">▦</button>
+            </div>
           </div>
 
           <div class="actionbar">
@@ -45,12 +55,13 @@
             <button id="mine-btn" class="mine-btn" type="button">
               <span class="pick" aria-hidden="true">⛏</span>
               <span>Miner</span>
-              <small id="mine-hint">Touchez un bloc ou maintenez ce bouton</small>
+              <small id="mine-hint">Touchez un bloc pour le choisir, puis Miner (maintenir = continu)</small>
             </button>
           </div>
         </section>
 
-        <section class="panel">
+        <section class="panel" id="panel" aria-label="Classement, brigade, saisons et profil">
+          <button type="button" class="sheet-close" id="panel-close">Fermer ✕</button>
           <nav class="tabs" role="tablist">
             <button role="tab" data-tab="board" class="active">Classement</button>
             <button role="tab" data-tab="brigade">Brigade</button>
@@ -109,6 +120,9 @@
             </form>
             <h2>Apparence <small class="muted">(cosmétique, gratuite)</small></h2>
             <div class="skins" id="skins"></div>
+            <h2>Affichage</h2>
+            <label class="toggle"><input type="checkbox" id="low-fx" /> Effets réduits (appareils modestes : moins de particules, pas de secousse, résolution standard)</label>
+            <p class="muted small">Glisser : se déplacer · Pincer ou molette : zoomer · Flèches / ZQSD / WASD : se déplacer · + et − : zoom · C : recentrer · V : vue d'ensemble · Espace : miner.</p>
             <h2>Connexion</h2>
             <p class="muted small">Vous jouez avec un <strong>compte invité</strong> lié à ce navigateur. La connexion Google / Apple est prévue mais <strong>pas encore disponible</strong>.</p>
             <div class="row">
@@ -136,6 +150,17 @@
         </section>
       </main>
 
+      <div class="backdrop" id="backdrop" hidden></div>
+      <div class="overlay" id="overview" hidden>
+        <div class="overlay-card" role="dialog" aria-label="Vue d'ensemble du cube">
+          <div class="overlay-head">
+            <strong>Vue d'ensemble du cube</strong>
+            <button type="button" id="overview-close">Fermer ✕</button>
+          </div>
+          <canvas id="overview-canvas"></canvas>
+          <p class="muted small">Couches restantes, avancement et couche courante. Touchez un bloc pour vous y rendre.</p>
+        </div>
+      </div>
       <div class="toasts" id="toasts" aria-live="polite"></div>
       <dialog id="season-dialog">
         <div id="season-dialog-body"></div>
