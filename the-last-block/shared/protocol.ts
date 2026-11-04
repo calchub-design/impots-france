@@ -59,6 +59,24 @@ export interface SeasonInfo {
   completedEarlyMs: number | null;
 }
 
+/**
+ * Présence observée : dernier bloc frappé par un joueur au cours des
+ * `PRESENCE_WINDOW_MS` dernières millisecondes. Dérivée des coups réels
+ * (aucune position de caméra n'est transmise), gardée en mémoire seulement.
+ */
+export interface PresenceEntry {
+  playerId: string;
+  name: string;
+  skin: string;
+  brigadeName: string | null;
+  /** Index du bloc dans la couche courante. */
+  block: number;
+  /** Âge de l'observation au moment de l'envoi (ms). */
+  ageMs: number;
+}
+
+export const PRESENCE_WINDOW_MS = 20_000;
+
 /** Avancement de la saison active et estimation de la fin du cube. */
 export interface SeasonProjection {
   totalHits: number;
@@ -126,6 +144,8 @@ export type ClientMessage =
   | { t: 'mine'; actionId: string; layer: number; block: number }
   | { t: 'setName'; name: string }
   | { t: 'setSkin'; skin: string }
+  /** Masquer ou afficher ma position (présence) aux autres joueurs. */
+  | { t: 'setPresence'; visible: boolean }
   | { t: 'brigadeCreate'; name: string }
   | { t: 'brigadeJoin'; code: string }
   | { t: 'brigadeLeave' }
@@ -157,6 +177,9 @@ export interface WelcomeMessage {
   online: number;
   serverTime: number;
   projection: SeasonProjection | null;
+  presence: PresenceEntry[];
+  /** Ma position est-elle partagée avec les autres joueurs ? */
+  presenceVisible: boolean;
 }
 
 export interface MineResultMessage {
@@ -204,11 +227,12 @@ export type ServerMessage =
       online: number;
       destroyedBlocks: number;
       projection: SeasonProjection | null;
+      presence: PresenceEntry[];
     }
   | { t: 'token'; token: string }
   | { t: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null }
   | { t: 'seasonStarted' }
-  | { t: 'profile'; player: PublicPlayer }
+  | { t: 'profile'; player: PublicPlayer; presenceVisible?: boolean }
   | { t: 'brigade'; brigade: BrigadeInfo | null }
   | { t: 'error'; code: string; message: string }
   | { t: 'pong'; ts: number; serverTime: number };

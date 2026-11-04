@@ -28,12 +28,17 @@
         <section class="stage">
           <div class="viewport" id="viewport">
             <canvas id="world" tabindex="0" aria-label="Surface de minage : glisser pour se déplacer, toucher un bloc pour le sélectionner, Miner pour le frapper"></canvas>
+            <button type="button" class="banner" id="banner" aria-label="Regarder le panneau géant des mineurs">
+              <span class="banner-top" id="banner-top">★ —</span>
+              <span class="banner-sub" id="banner-sub">—</span>
+            </button>
             <div class="chips">
               <span class="chip">couche <b id="hud-layer">—</b></span>
-              <span class="chip"><b id="hud-progress">—</b> miné</span>
+              <span class="chip extra"><b id="hud-progress">—</b> miné</span>
               <span class="chip">rang <b id="hud-rank">—</b></span>
               <span class="chip extra"><b id="hud-hits">0</b> coups</span>
               <span class="chip extra"><b id="hud-online">—</b> en ligne</span>
+              <span class="chip" id="chip-presence" title="Mineurs ayant frappé un bloc dans les 20 dernières secondes (observation réelle)"><b id="hud-presence">0</b> actifs</span>
             </div>
             <div class="map-box">
               <canvas id="minimap" aria-label="Mini-carte de la face : toucher pour s'y rendre"></canvas>
@@ -44,6 +49,8 @@
               <button type="button" id="zoom-out" title="Dézoomer (−)" aria-label="Dézoomer">−</button>
               <button type="button" id="recenter" title="Recentrer sur mon bloc (C)" aria-label="Recentrer sur mon bloc">◎</button>
               <button type="button" id="overview-btn" title="Vue d'ensemble du cube (V)" aria-label="Vue d'ensemble du cube">▦</button>
+              <button type="button" id="board-btn" title="Regarder le panneau (P)" aria-label="Regarder le panneau géant">★</button>
+              <button type="button" id="brigade-go" title="Rejoindre ma brigade (B)" aria-label="Rejoindre ma brigade" hidden>⚑</button>
             </div>
           </div>
 
@@ -123,6 +130,9 @@
             <h2>Affichage</h2>
             <label class="toggle"><input type="checkbox" id="low-fx" /> Effets réduits (appareils modestes : moins de particules, pas de secousse, résolution standard)</label>
             <p class="muted small">Glisser : se déplacer · Pincer ou molette : zoomer · Flèches / ZQSD / WASD : se déplacer · + et − : zoom · C : recentrer · V : vue d'ensemble · Espace : miner.</p>
+            <h2>Présence</h2>
+            <label class="toggle"><input type="checkbox" id="presence-visible" checked /> Montrer aux autres joueurs le dernier bloc que j'ai frappé (visible 20 s, jamais ma position de caméra)</label>
+            <p class="muted small">Les marqueurs de mineurs sont des observations réelles : le dernier coup de chaque joueur au cours des 20 dernières secondes. Aucun joueur n'est simulé ; sans donnée, rien n'est affiché.</p>
             <h2>Connexion</h2>
             <p class="muted small">Vous jouez avec un <strong>compte invité</strong> lié à ce navigateur. La connexion Google / Apple est prévue mais <strong>pas encore disponible</strong>.</p>
             <div class="row">

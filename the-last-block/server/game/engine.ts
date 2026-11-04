@@ -9,8 +9,10 @@ import {
   type MyStats,
   type PlaytimeInfo,
   type PublicPlayer,
+  type PresenceEntry,
   type SeasonInfo,
   type SeasonProjection,
+  PRESENCE_WINDOW_MS,
 } from '../../shared/protocol.js';
 import { DEFAULT_SKIN, isValidSkin } from '../../shared/skins.js';
 import type { GameRules } from '../config.js';
@@ -61,6 +63,7 @@ interface PlayerCache {
   lastActionAt: number | null;
   playDay: string;
   playMs: number;
+  presenceHidden: boolean;
 }
 
 interface Contribution {
@@ -116,6 +119,8 @@ export class GameEngine {
   private readonly joinFailures = new SlidingWindowLimiter(BRIGADE_JOIN_FAILURES, BRIGADE_JOIN_WINDOW_MS);
   /** Coups par minute de la saison (fenêtre glissante d'une heure) pour l'estimation de fin. */
   private hitBuckets = new Map<number, number>();
+  /** Dernier coup accepté de chaque joueur (présence observée, mémoire seulement). */
+  private lastHits = new Map<string, { block: number; layer: number; at: number }>();
 
   constructor(
     readonly store: GameStore,
@@ -229,6 +234,7 @@ export class GameEngine {
         lastActionAt: row.last_action_at,
         playDay: day,
         playMs: this.store.getPlaytime(id, day),
+        presenceHidden: row.presence_hidden === 1,
       };
       this.playerCache.set(id, p);
     }
@@ -251,6 +257,46 @@ export class GameEngine {
     this.emit({ type: 'profileChanged', playerId });
     if (p.brigadeId) this.emitBrigade(p.brigadeId);
     return this.publicPlayer(playerId);
+  }
+
+  /** Présence : joueurs ayant frappé un bloc de la couche courante récemment (et ne l'ayant pas masquée). */
+  presence(windowMs = PRESENCE_WINDOW_MS, limit = 40): PresenceEntry[] {
+    const st = this.state;
+    if (!st) return [];
+    const now = this.now();
+    const brigades = this.brigades();
+    const out: PresenceEntry[] = [];
+    for (const [playerId, h] of this.lastHits) {
+      if (now - h.at > windowMs) {
+        this.lastHits.delete(playerId);
+        continue;
+      }
+      if (h.layer !== st.currentLayer) continue;
+      const p = this.player(playerId);
+      if (p.presenceHidden) continue;
+      out.push({
+        playerId,
+        name: p.name,
+        skin: p.skin,
+        brigadeName: p.brigadeId ? (brigades.get(p.brigadeId)?.name ?? null) : null,
+        block: h.block,
+        ageMs: now - h.at,
+      });
+    }
+    return out.sort((a, b) => a.ageMs - b.ageMs).slice(0, limit);
+  }
+
+  presenceVisible(playerId: string): boolean {
+    return !this.player(playerId).presenceHidden;
+  }
+
+  setPresenceVisible(playerId: string, visible: unknown): boolean {
+    if (typeof visible !== 'boolean') throw new GameError('invalid_presence', 'Valeur invalide.');
+    const p = this.player(playerId);
+    this.store.setPresenceHidden(playerId, !visible);
+    p.presenceHidden = !visible;
+    this.emit({ type: 'profileChanged', playerId });
+    return visible;
   }
 
   setSkin(playerId: string, skin: unknown): PublicPlayer {
@@ -368,6 +414,7 @@ export class GameEngine {
     st.remainingHp--;
     const minute = Math.floor(now / 60_000);
     this.hitBuckets.set(minute, (this.hitBuckets.get(minute) ?? 0) + 1);
+    this.lastHits.set(playerId, { block: B, layer: L, at: now });
     if (this.hitBuckets.size > 70) for (const k of this.hitBuckets.keys()) if (k < minute - 60) this.hitBuckets.delete(k);
     p.playMs = newPlayMs;
     p.lastActionAt = now;
@@ -510,6 +557,7 @@ export class GameEngine {
     this.sortedPlayers = null;
     this.nextSeasonAt = this.rules.autoStartSeason ? now + this.rules.seasonCooldownMs : null;
     this.hitBuckets.clear();
+    this.lastHits.clear();
     const info = this.seasonInfo(this.store.getSeason(st.season.id)!);
     this.emit({ type: 'seasonEnded', season: info, nextSeasonAt: this.nextSeasonAt });
     return info;

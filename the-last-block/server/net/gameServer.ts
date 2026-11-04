@@ -150,6 +150,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       online: byPlayer.size,
       destroyedBlocks: engine.destroyedBlocks,
       projection: engine.projection(),
+      presence: engine.presence(),
     });
   }
 
@@ -172,6 +173,8 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       online: byPlayer.size,
       serverTime: engine.now(),
       projection: engine.projection(),
+      presence: engine.presence(),
+      presenceVisible: engine.presenceVisible(playerId),
     };
   }
 
@@ -211,7 +214,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
         break;
       case 'profileChanged':
         boardDirty = true;
-        toPlayer(e.playerId, () => ({ t: 'profile', player: engine.publicPlayer(e.playerId) }));
+        toPlayer(e.playerId, () => ({ t: 'profile', player: engine.publicPlayer(e.playerId), presenceVisible: engine.presenceVisible(e.playerId) }));
         break;
     }
   });
@@ -337,6 +340,10 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
         return;
       case 'setSkin':
         engine.setSkin(playerId, msg.skin);
+        return;
+      case 'setPresence':
+        engine.setPresenceVisible(playerId, msg.visible);
+        boardDirty = true;
         return;
       case 'brigadeCreate':
         engine.createBrigade(playerId, msg.name);

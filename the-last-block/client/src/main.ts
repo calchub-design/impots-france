@@ -8,16 +8,20 @@ import type {
   MyStats,
   PlaytimeInfo,
   PublicPlayer,
+  PresenceEntry,
   SeasonInfo,
   SeasonProjection,
   ServerMessage,
 } from '../../shared/protocol.js';
+import { PRESENCE_WINDOW_MS } from '../../shared/protocol.js';
 import { SKINS, skinById } from '../../shared/skins.js';
 import { GameSocket, type ConnState } from './net.js';
 import { Scene } from './scene.js';
 import { TILT } from './world/camera.js';
 import { nearestAlive, toXY, type FaceData } from './world/face.js';
+import { BillboardLayer, billboardCameraY } from './world/billboard.js';
 import { Minimap } from './world/minimap.js';
+import { brigadeColor, groupByBlock, PresenceLayer, presenceAge, type PresenceMarker } from './world/presence.js';
 import { SurfaceView } from './world/surface.js';
 
 // ---------------------------------------------------------------------------
@@ -84,6 +88,9 @@ const profile = (params.get('profil') ?? params.get('profile') ?? 'default').rep
 // ---------------------------------------------------------------------------
 
 const world = new SurfaceView($<HTMLCanvasElement>('#world'));
+const billboard = new BillboardLayer();
+const presence = new PresenceLayer();
+world.layers = [billboard, presence];
 const minimap = new Minimap($<HTMLCanvasElement>('#minimap'), world.camera, (wx, wy, final) => {
   world.camera.animateTo({ x: wx, y: wy }, final ? animMs(250) : 0);
   world.requestRender();
@@ -96,6 +103,8 @@ let cameraReady = false;
 
 const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 world.reducedMotion = reducedMotion;
+billboard.reducedMotion = reducedMotion;
+presence.reducedMotion = reducedMotion;
 world.camera.inertia = !reducedMotion;
 /** Durée d'animation de caméra : nulle si l'utilisateur préfère réduire les mouvements. */
 const animMs = (ms: number) => (reducedMotion ? 0 : ms);
@@ -152,7 +161,10 @@ function applyCube(reset: boolean) {
     hp: cube.currentHp,
   };
   const cam = world.camera;
-  cam.setBounds({ minX: 0, maxX: cube.size, minY: 0, maxY: cube.size });
+  // Au nord, la caméra peut remonter jusqu'au panneau planté au-delà du bord.
+  cam.setBounds({ minX: 0, maxX: cube.size, minY: billboardCameraY(TILT), maxY: cube.size });
+  billboard.faceSize = cube.size;
+  presence.faceSize = cube.size;
   cam.minZoom = Math.max(5, Math.min(24, cam.fitZoom(cube.size, cube.size) * 0.95));
   cam.maxZoom = 96;
   if (reset || !cameraReady) {
@@ -189,7 +201,100 @@ function updateWaiting() {
 }
 setInterval(updateWaiting, 200);
 
+/** Panneau du décor + bandeau compact : top 3, meilleure brigade, avancement, saison. */
+function updateBillboard() {
+  const cube = state.cube;
+  if (!state.season || !cube) {
+    billboard.data = null;
+    $('#banner-top').textContent = state.lastEnded ? `★ ${state.lastEnded.name} terminée` : '★ Intersaison';
+    $('#banner-sub').textContent = state.lastEnded
+      ? `Champion : ${state.lastEnded.championName ?? '—'} · Pierre finale : ${state.lastEnded.finalStoneName ?? '—'}`
+      : countdownText();
+    return;
+  }
+  const best = state.brigades[0] ?? null;
+  const progress = cube.destroyedBlocks / cube.totalBlocks;
+  billboard.data = {
+    seasonName: state.season.name,
+    countdown: countdownText(),
+    top: state.leaderboard.slice(0, 3).map((e) => ({ name: e.name, color: skinById(e.skin).color, hits: e.hits })),
+    brigade: best ? { name: best.name, hits: best.hits, eligible: best.eligible } : null,
+    progress,
+    finalStone: cube.currentLayer === cube.size - 1 && cube.layerRemaining[cube.currentLayer] === 1,
+  };
+  const top3 = state.leaderboard.slice(0, 3);
+  $('#banner-top').textContent = top3.length ? `★ ${top3.map((e, i) => `${i + 1}. ${e.name} ${e.hits}`).join(' · ')}` : '★ Aucun coup pour l\'instant';
+  $('#banner-sub').textContent = `${best ? `⚑ ${best.name} · ` : ''}cube ${fmtPct(progress)} · ${state.season.name}`;
+}
+
+function lookAtBillboard() {
+  if (!face) return;
+  const cam = world.camera;
+  // Le panneau tient dans la largeur libre, à gauche de la colonne de commandes.
+  const controls = $('.cam-controls').getBoundingClientRect().width + 16;
+  const zoom = Math.max(cam.minZoom, Math.min(48, (cam.viewW - controls - 16) / 23));
+  cam.animateTo({ x: face.size / 2 + controls / 2 / zoom, y: billboardCameraY(TILT), zoom }, animMs(600));
+  world.requestRender();
+}
+
+/** Le bandeau compact est masqué quand le panneau du décor est à l'écran (pas de doublon). */
+function updateBannerVisibility() {
+  const visible = !(billboard.data && world.camera.visibleWorld().minY < -2);
+  const banner = $('#banner');
+  if (banner.hidden === !visible) return;
+  banner.hidden = !visible;
+  placeToasts();
+}
+$('#banner').addEventListener('click', lookAtBillboard);
+$('#board-btn').addEventListener('click', lookAtBillboard);
+
+/** Présence : observations transmises par le serveur (jamais simulées). */
+function setPresence(list: PresenceEntry[]) {
+  const now = performance.now();
+  presence.markers = list.map((m): PresenceMarker => ({ ...m, receivedAt: now }));
+  updatePresenceUi();
+}
+/** Pourcentage lisible même au tout début d'un très grand cube. */
+function fmtPct(f: number): string {
+  return `${(f * 100).toFixed(f > 0 && f < 0.01 ? 2 : 1).replace('.', ',')} %`;
+}
+
+function updatePresenceUi() {
+  const now = performance.now();
+  presence.myId = state.player?.id ?? null;
+  presence.myBrigade = state.brigade?.name ?? null;
+  const live = presence.markers.filter((m) => m.playerId !== presence.myId && presenceAge(m, now) <= PRESENCE_WINDOW_MS);
+  $('#hud-presence').textContent = String(live.length);
+  minimap.markers = [...groupByBlock(live, now).entries()].map(([idx, l]) => ({ idx, color: brigadeColor(l[0].brigadeName) }));
+  ($('#brigade-go') as HTMLButtonElement).hidden = !state.brigade;
+}
+// Les observations vieillissent : rafraîchissement discret une fois par seconde.
+setInterval(() => {
+  if (presence.markers.length === 0) return;
+  updatePresenceUi();
+  minimap.draw();
+  world.requestRender();
+}, 1000);
+
+function joinBrigade() {
+  if (!state.brigade || !face) return;
+  const now = performance.now();
+  const mates = presence.markers
+    .filter((m) => m.brigadeName === state.brigade!.name && m.playerId !== state.player?.id && presenceAge(m, now) <= PRESENCE_WINDOW_MS)
+    .sort((a, b) => presenceAge(a, now) - presenceAge(b, now));
+  if (mates.length === 0) {
+    toast('Aucun membre de votre brigade n\'a miné dans les 20 dernières secondes : position inconnue.', 'info');
+    return;
+  }
+  const { x, y } = toXY(mates[0].block, face.size);
+  world.camera.animateTo({ x: x + 0.5, y: y + 0.5, zoom: defaultZoom() }, animMs(500));
+  world.requestRender();
+  toast(`Vous rejoignez ${mates[0].name} (vu il y a ${Math.round(presenceAge(mates[0], now) / 1000)} s).`, 'good');
+}
+$('#brigade-go').addEventListener('click', joinBrigade);
+
 function syncWorld() {
+  updateBillboard();
   world.setState({
     face,
     cubeSize: state.cube?.size ?? 1,
@@ -209,6 +314,7 @@ function updateCoords() {
 }
 
 world.onCameraMove = () => {
+  updateBannerVisibility();
   minimap.draw();
   updateCoords();
   saveCamera();
@@ -362,6 +468,8 @@ function onMessage(msg: ServerMessage) {
       state.online = msg.online;
       state.clockOffset = msg.serverTime - Date.now();
       state.projection = msg.projection;
+      setPresence(msg.presence);
+      ($('#presence-visible') as HTMLInputElement).checked = msg.presenceVisible;
       if (!msg.season) loadSeasons(); // intersaison : récupère la saison écoulée pour le panneau
       applyCube(face === null || face.size !== msg.cube?.size || lastSeasonId !== msg.season?.id);
       lastSeasonId = msg.season?.id ?? null;
@@ -413,6 +521,7 @@ function onMessage(msg: ServerMessage) {
       state.brigades = msg.brigades;
       state.online = msg.online;
       state.projection = msg.projection;
+      setPresence(msg.presence);
       if (state.cube) state.cube.destroyedBlocks = msg.destroyedBlocks;
       renderBoards();
       renderProjection();
@@ -429,11 +538,13 @@ function onMessage(msg: ServerMessage) {
       break;
     case 'profile':
       state.player = msg.player;
+      if (msg.presenceVisible !== undefined) ($('#presence-visible') as HTMLInputElement).checked = msg.presenceVisible;
       renderProfile();
       break;
     case 'brigade':
       state.brigade = msg.brigade;
       renderBrigade();
+      updatePresenceUi();
       break;
     case 'error':
       toast(msg.message, 'bad');
@@ -586,6 +697,8 @@ window.addEventListener('keydown', (e) => {
     world.requestRender();
   } else if (e.code === 'KeyC') recenter();
   else if (e.code === 'KeyV') openOverview();
+  else if (e.code === 'KeyP') lookAtBillboard();
+  else if (e.code === 'KeyB') joinBrigade();
 });
 window.addEventListener('keyup', (e) => {
   if (held.delete(e.code)) updateKeyPan();
@@ -644,6 +757,10 @@ setInterval(() => {
   }
 }, 5000);
 
+$<HTMLInputElement>('#presence-visible').addEventListener('change', (e) => {
+  socket.send({ t: 'setPresence', visible: (e.target as HTMLInputElement).checked });
+});
+
 const lowFxBox = $<HTMLInputElement>('#low-fx');
 lowFxBox.checked = world.lowFx;
 lowFxBox.addEventListener('change', () => {
@@ -678,7 +795,7 @@ function renderHud() {
   const cube = state.cube;
   $('#season-name').textContent = state.season?.name ?? 'Intersaison';
   $('#hud-layer').textContent = cube ? `${Math.min(cube.currentLayer + 1, cube.size)} / ${cube.size}` : '—';
-  $('#hud-progress').textContent = cube ? `${((cube.destroyedBlocks / cube.totalBlocks) * 100).toFixed(1)} %` : '—';
+  $('#hud-progress').textContent = cube ? fmtPct(cube.destroyedBlocks / cube.totalBlocks) : '—';
   $('#hud-hits').textContent = state.me.hits.toLocaleString('fr-FR');
   $('#hud-rank').textContent = state.me.rank ? `#${state.me.rank}` : '—';
   $('#hud-online').textContent = String(state.online);
@@ -929,6 +1046,14 @@ function toast(text: string, kind: 'good' | 'bad' | 'info' = 'info') {
   while (box.children.length > 3) box.firstElementChild?.remove();
   setTimeout(() => t.remove(), 3200);
 }
+
+setInterval(() => {
+  // Le compte à rebours du panneau n'est redessiné que si le panneau est à l'écran.
+  if (billboard.data && world.camera.visibleWorld().minY < 0) {
+    billboard.data.countdown = countdownText();
+    world.requestRender();
+  }
+}, 1000);
 
 function countdownText(): string {
   const now = serverNow();

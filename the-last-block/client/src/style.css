@@ -578,6 +578,49 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.banner[hidden] {
+  display: none;
+}
+
+.banner {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  max-width: calc(100% - 112px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 5px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 215, 106, 0.45);
+  background: rgba(14, 12, 34, 0.86);
+  box-shadow: 0 0 14px rgba(255, 215, 106, 0.15);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.banner-top,
+.banner-sub {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.banner-top {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--gold-2);
+}
+
+.banner-sub {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
 .map-box {
   position: absolute;
   top: 8px;
@@ -615,6 +658,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.cam-controls button[hidden] {
+  display: none;
 }
 
 .cam-controls button {
@@ -790,6 +837,16 @@ body {
   .sheet-close {
     display: block;
     margin: 0 0 0.5rem auto;
+  }
+}
+
+/* Écrans très bas (téléphone en paysage) : commandes en ligne, indicateurs masqués. */
+@media (max-height: 600px) {
+  .cam-controls {
+    flex-direction: row;
+  }
+  .chips {
+    display: none;
   }
 }
 

@@ -16,6 +16,7 @@ export interface PlayerRow {
   auth_provider: string;
   created_at: number;
   last_action_at: number | null;
+  presence_hidden: number;
 }
 
 export interface SeasonRow {
@@ -93,6 +94,7 @@ export interface GameStore {
   /** Remplace (rotation) ou supprime (null = révocation) l'empreinte du jeton. */
   setTokenHash(id: string, hash: string | null): void;
   setPlayerSkin(id: string, skin: string): void;
+  setPresenceHidden(id: string, hidden: boolean): void;
   setLastActionAt(id: string, at: number): void;
 
   // Saisons

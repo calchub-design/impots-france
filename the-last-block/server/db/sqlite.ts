@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS players (
   skin TEXT NOT NULL DEFAULT 'classic',
   auth_provider TEXT NOT NULL DEFAULT 'guest',
   created_at INTEGER NOT NULL,
-  last_action_at INTEGER
+  last_action_at INTEGER,
+  presence_hidden INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS seasons (
@@ -146,6 +147,7 @@ export class SqliteStore implements GameStore {
   private migrate() {
     const cols = this.db.prepare('PRAGMA table_info(players)').all() as { name: string }[];
     if (!cols.some((c) => c.name === 'name_key')) this.db.exec('ALTER TABLE players ADD COLUMN name_key TEXT');
+    if (!cols.some((c) => c.name === 'presence_hidden')) this.db.exec('ALTER TABLE players ADD COLUMN presence_hidden INTEGER NOT NULL DEFAULT 0');
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS players_name_key ON players(name_key)');
     // Rattrapage : pseudos sans clé (v1). En cas de doublon historique, la clé
     // reste NULL : ce joueur devra changer de pseudo pour en réserver un.
@@ -232,6 +234,9 @@ export class SqliteStore implements GameStore {
   }
   setPlayerName(id: string, name: string, key: string) {
     this.run('UPDATE players SET name = ?, name_key = ? WHERE id = ?', name, key, id);
+  }
+  setPresenceHidden(id: string, hidden: boolean) {
+    this.run('UPDATE players SET presence_hidden = ? WHERE id = ?', hidden ? 1 : 0, id);
   }
   setPlayerSkin(id: string, skin: string) {
     this.run('UPDATE players SET skin = ? WHERE id = ?', skin, id);
