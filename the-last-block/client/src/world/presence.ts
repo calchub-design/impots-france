@@ -1,5 +1,5 @@
 import { PRESENCE_WINDOW_MS, type PresenceEntry } from '../../../shared/protocol.js';
-import type { Camera } from './camera.js';
+import type { ViewCamera as Camera } from './view.js';
 import { toXY } from './face.js';
 import { nameHue } from './palette.js';
 import type { WorldLayer } from './surface.js';

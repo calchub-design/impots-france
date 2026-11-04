@@ -28,6 +28,7 @@
         <section class="stage">
           <div class="viewport" id="viewport">
             <canvas id="world" tabindex="0" aria-label="Surface de minage : glisser pour se déplacer, toucher un bloc pour le sélectionner, Miner pour le frapper"></canvas>
+            <div class="vignette" aria-hidden="true"></div>
             <button type="button" class="banner" id="banner" aria-label="Regarder le panneau géant des mineurs">
               <span class="banner-top" id="banner-top">★ —</span>
               <span class="banner-sub" id="banner-sub">—</span>
@@ -128,6 +129,11 @@
             <h2>Apparence <small class="muted">(cosmétique, gratuite)</small></h2>
             <div class="skins" id="skins"></div>
             <h2>Affichage</h2>
+            <fieldset class="renderer-choice">
+              <legend class="small">Rendu du cube</legend>
+              <label class="toggle"><input type="radio" name="renderer" value="monolith" /> Monolithe — perspective, vue monumentale (nouveau)</label>
+              <label class="toggle"><input type="radio" name="renderer" value="classic" /> Classique — vue de dessus, plus léger</label>
+            </fieldset>
             <label class="toggle"><input type="checkbox" id="low-fx" /> Effets réduits (appareils modestes : moins de particules, pas de secousse, résolution standard)</label>
             <p class="muted small">Glisser : se déplacer · Pincer ou molette : zoomer · Flèches / ZQSD / WASD : se déplacer · + et − : zoom · C : recentrer · V : vue d'ensemble · Espace : miner.</p>
             <h2>Présence</h2>

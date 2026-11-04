@@ -2,6 +2,7 @@ import { Camera, TILT } from './camera.js';
 import { hash2, toXY, visibleRange, type FaceData } from './face.js';
 import { attachGestures, type PointerKind } from './gestures.js';
 import { shade, strataColor } from './palette.js';
+import type { ViewCamera, WorldView } from './view.js';
 
 /**
  * Rendu Canvas 2D de la face jouable vue par la caméra.
@@ -29,9 +30,9 @@ export interface SurfaceState {
 
 export interface WorldLayer {
   /** Dessiné avant la face (ex. panneau au nord). */
-  under?(ctx: CanvasRenderingContext2D, cam: Camera, time: number): void;
+  under?(ctx: CanvasRenderingContext2D, cam: ViewCamera, time: number): void;
   /** Dessiné après la face (ex. marqueurs de présence). */
-  over?(ctx: CanvasRenderingContext2D, cam: Camera, time: number): void;
+  over?(ctx: CanvasRenderingContext2D, cam: ViewCamera, time: number): void;
   /** Vrai si la couche demande une animation continue. */
   animating?(): boolean;
 }
@@ -66,7 +67,8 @@ interface Flash {
 export const WALL = 0.5; // hauteur visible d'une couche, en fraction de la largeur d'un bloc
 const SCALE_STEP = 8; // repère d'échelle tous les 8 blocs
 
-export class SurfaceView {
+export class SurfaceView implements WorldView {
+  readonly kind = 'classic' as const;
   readonly camera = new Camera();
   state: SurfaceState = { face: null, cubeSize: 1, selected: null, pending: new Set(), offline: false, message: null };
   lowFx = false;
@@ -91,6 +93,7 @@ export class SurfaceView {
   private frameTimes: number[] = [];
   /** Intervalles entre images consécutives pendant une animation (fluidité réellement obtenue). */
   private frameIntervals: number[] = [];
+  private lastAny = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
@@ -220,10 +223,12 @@ export class SurfaceView {
 
   private frame = (t: number) => {
     this.raf = 0;
-    if (this.last) {
-      this.frameIntervals.push(t - this.last);
+    // Fluidité réelle, glisser compris : intervalle entre deux images rapprochées (< 1 s).
+    if (this.lastAny && t - this.lastAny < 1000) {
+      this.frameIntervals.push(t - this.lastAny);
       if (this.frameIntervals.length > 120) this.frameIntervals.shift();
     }
+    this.lastAny = t;
     const dt = this.last ? Math.min(64, t - this.last) : 16;
     this.last = t;
     let keep = false;

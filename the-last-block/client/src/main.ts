@@ -22,7 +22,10 @@ import { nearestAlive, toXY, type FaceData } from './world/face.js';
 import { BillboardLayer, billboardCameraY } from './world/billboard.js';
 import { Minimap } from './world/minimap.js';
 import { brigadeColor, groupByBlock, PresenceLayer, presenceAge, type PresenceMarker } from './world/presence.js';
+import { MonolithView } from './world/monolith/view.js';
 import { SurfaceView } from './world/surface.js';
+import type { WorldView } from './world/view.js';
+import { layerColor, scale } from './world/monolith/material.js';
 
 // ---------------------------------------------------------------------------
 // État client (toujours dérivé des messages du serveur)
@@ -87,7 +90,31 @@ const profile = (params.get('profil') ?? params.get('profile') ?? 'default').rep
 // Surface de minage navigable (face « top » = dessus de la couche courante)
 // ---------------------------------------------------------------------------
 
-const world = new SurfaceView($<HTMLCanvasElement>('#world'));
+/**
+ * Choix du rendu : « monolithe » (perspective, nouveau) ou « classique »
+ * (2.5D léger). Le rendu classique reste la valeur par défaut tant que le
+ * nouveau n'a pas été validé ; `?rendu=monolithe` ou le réglage du profil
+ * permettent de choisir.
+ */
+type RendererKind = 'monolith' | 'classic';
+const DEFAULT_RENDERER: RendererKind = 'monolith';
+/**
+ * Priorité : paramètre d'URL > choix explicite du joueur (Profil) > repli
+ * automatique enregistré sur un appareil trop lent > rendu par défaut.
+ */
+function chooseRenderer(): RendererKind {
+  const q = params.get('rendu');
+  if (q === 'monolithe' || q === 'monolith') return 'monolith';
+  if (q === 'classique' || q === 'classic') return 'classic';
+  const saved = storageGet('tlb.renderer');
+  if (saved === 'monolith' || saved === 'classic') return saved;
+  if (storageGet('tlb.renderer.auto') === 'classic') return 'classic';
+  return DEFAULT_RENDERER;
+}
+const rendererKind = chooseRenderer();
+const world: WorldView = rendererKind === 'monolith' ? new MonolithView($<HTMLCanvasElement>('#world')) : new SurfaceView($<HTMLCanvasElement>('#world'));
+const monolith = world instanceof MonolithView ? world : null;
+document.body.dataset.renderer = rendererKind;
 const billboard = new BillboardLayer();
 const presence = new PresenceLayer();
 world.layers = [billboard, presence];
@@ -140,7 +167,9 @@ function saveCamera() {
 
 function defaultZoom(): number {
   const c = world.camera;
-  return Math.max(c.minZoom, Math.min(c.maxZoom, Math.min(52, Math.max(30, Math.min(c.viewW, c.viewH) / 9))));
+  // En perspective, le premier plan est agrandi : on vise des blocs plus petits au centre.
+  const z = monolith ? Math.min(38, Math.max(24, Math.min(c.viewW, c.viewH) / 13)) : Math.min(52, Math.max(30, Math.min(c.viewW, c.viewH) / 9));
+  return Math.max(c.minZoom, Math.min(c.maxZoom, z));
 }
 
 /** Reconstruit la face à partir de l'état serveur. `reset` : nouvelle saison / première connexion. */
@@ -162,7 +191,9 @@ function applyCube(reset: boolean) {
   };
   const cam = world.camera;
   // Au nord, la caméra peut remonter jusqu'au panneau planté au-delà du bord.
-  cam.setBounds({ minX: 0, maxX: cube.size, minY: billboardCameraY(TILT), maxY: cube.size });
+  // Rendu classique : la caméra peut remonter jusqu'au panneau planté au nord.
+  // Rendu monolithe : le panneau se voit depuis la face, la caméra reste au-dessus.
+  cam.setBounds({ minX: 0, maxX: cube.size, minY: monolith ? 0 : billboardCameraY(TILT), maxY: cube.size });
   billboard.faceSize = cube.size;
   presence.faceSize = cube.size;
   cam.minZoom = Math.max(5, Math.min(24, cam.fitZoom(cube.size, cube.size) * 0.95));
@@ -229,6 +260,10 @@ function updateBillboard() {
 
 function lookAtBillboard() {
   if (!face) return;
+  if (monolith) {
+    monolith.lookAtBillboard();
+    return;
+  }
   const cam = world.camera;
   // Le panneau tient dans la largeur libre, à gauche de la colonne de commandes.
   const controls = $('.cam-controls').getBoundingClientRect().width + 16;
@@ -239,7 +274,15 @@ function lookAtBillboard() {
 
 /** Le bandeau compact est masqué quand le panneau du décor est à l'écran (pas de doublon). */
 function updateBannerVisibility() {
-  const visible = !(billboard.data && world.camera.visibleWorld().minY < -2);
+  // Vue monumentale : la scène se suffit, bandeau et mini-carte s'effacent.
+  const monumental = !!monolith?.monumental;
+  $('#viewport').classList.toggle('monumental', monumental);
+  // Monolithe : en vue de minage, le panneau lointain reste petit (bandeau utile) ; on ne
+  // masque le bandeau que si la caméra s'est élevée vers le panneau et qu'il est bien lisible.
+  const boardShown = monolith
+    ? monumental || ((monolith.camera as { t: number }).t > 0.25 && monolith.billboardScreenWidth > world.camera.viewW * 0.35)
+    : world.camera.visibleWorld().minY < -2;
+  const visible = !(billboard.data && boardShown);
   const banner = $('#banner');
   if (banner.hidden === !visible) return;
   banner.hidden = !visible;
@@ -387,7 +430,20 @@ function closeOverview() {
   $('#overview').hidden = true;
   overview.setActive(false);
 }
-$('#overview-btn').addEventListener('click', openOverview);
+/** Bouton ▦ : vue d'ensemble isométrique (classique) ou vue monumentale en scène (monolithe). */
+function toggleOverview() {
+  if (!monolith) return openOverview();
+  if (monolith.monumental) recenter();
+  else monolith.showMonument();
+}
+$('#overview-btn').addEventListener('click', toggleOverview);
+if (monolith) {
+  // Mini-carte aux couleurs du monolithe (pierre-tech, éclaircie pour rester lisible).
+  minimap.tint = (layer, size) => scale(layerColor(layer, size), 1.7);
+  $('#overview-btn').title = 'Vue monumentale du cube (V)';
+  $('#overview-btn').setAttribute('aria-label', 'Vue monumentale du cube');
+  setInterval(updateBannerVisibility, 400);
+}
 $('#overview-close').addEventListener('click', closeOverview);
 $('#overview').addEventListener('click', (e) => e.target === $('#overview') && closeOverview());
 
@@ -696,7 +752,7 @@ window.addEventListener('keydown', (e) => {
     world.camera.zoomAt(0.8);
     world.requestRender();
   } else if (e.code === 'KeyC') recenter();
-  else if (e.code === 'KeyV') openOverview();
+  else if (e.code === 'KeyV') toggleOverview();
   else if (e.code === 'KeyP') lookAtBillboard();
   else if (e.code === 'KeyB') joinBrigade();
 });
@@ -747,12 +803,23 @@ window.addEventListener('resize', placeToasts);
 // (coût d'affichage d'un grand canevas haute densité), on bascule une fois, sauf
 // choix explicite de l'utilisateur.
 setInterval(() => {
-  if (world.lowFx || storageGet('tlb.lowfx') !== null) return;
   const t = world.recentFrameTimes;
-  const iv = world.recentFrameIntervals.filter((x) => x < 250).sort((a, b) => a - b);
+  // Les pauses du rendu (rien ne bouge) ne sont pas enregistrées ; 20 images suffisent
+  // pour juger, même sur un appareil qui n'en affiche que quelques-unes par seconde.
+  const iv = world.recentFrameIntervals.filter((x) => x < 10_000).sort((a, b) => a - b);
   const avg = t.length ? t.reduce((a, b) => a + b, 0) / t.length : 0;
-  const medianInterval = iv.length >= 60 ? iv[Math.floor(iv.length / 2)] : 0;
-  if ((t.length >= 60 && avg > 14) || medianInterval > 40) {
+  const medianInterval = iv.length >= 20 ? iv[Math.floor(iv.length / 2)] : 0;
+  if (world.lowFx) {
+    // Déjà allégé et toujours sous ~20 images/s : le rendu classique sera utilisé au
+    // prochain chargement (sauf choix explicite du joueur). Pas de rechargement en pleine partie.
+    if (monolith && medianInterval > 50 && storageGet('tlb.renderer') === null && storageGet('tlb.renderer.auto') === null) {
+      storageSet('tlb.renderer.auto', 'classic');
+      toast('Appareil lent : le rendu classique, plus léger, sera utilisé au prochain chargement (réglable dans Profil).', 'info');
+    }
+    return;
+  }
+  if (storageGet('tlb.lowfx') !== null) return; // choix explicite du joueur : on ne force rien
+  if ((t.length >= 20 && avg > 14) || medianInterval > 40) {
     world.lowFx = true;
     lowFxBox.checked = true;
     world.resize();
@@ -763,6 +830,14 @@ setInterval(() => {
 $<HTMLInputElement>('#presence-visible').addEventListener('change', (e) => {
   socket.send({ t: 'setPresence', visible: (e.target as HTMLInputElement).checked });
 });
+
+for (const input of document.querySelectorAll<HTMLInputElement>('input[name="renderer"]')) {
+  input.checked = input.value === rendererKind;
+  input.addEventListener('change', () => {
+    storageSet('tlb.renderer', input.value);
+    location.reload();
+  });
+}
 
 const lowFxBox = $<HTMLInputElement>('#low-fx');
 lowFxBox.checked = world.lowFx;
@@ -1043,6 +1118,7 @@ $('#reset-profile').addEventListener('click', () => {
 // ---------------------------------------------------------------------------
 
 function toast(text: string, kind: 'good' | 'bad' | 'info' = 'info') {
+  placeToasts(); // géométrie à jour (bandeau, mini-carte) au moment d'afficher
   const box = $('#toasts');
   const t = el('div', { cls: `toast ${kind}`, textContent: text });
   box.append(t);
@@ -1052,7 +1128,7 @@ function toast(text: string, kind: 'good' | 'bad' | 'info' = 'info') {
 
 setInterval(() => {
   // Le compte à rebours du panneau n'est redessiné que si le panneau est à l'écran.
-  if (billboard.data && world.camera.visibleWorld().minY < 0) {
+  if (billboard.data && (monolith ? monolith.billboardScreenWidth > 0 : world.camera.visibleWorld().minY < 0)) {
     billboard.data.countdown = countdownText();
     world.requestRender();
   }

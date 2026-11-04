@@ -1,4 +1,4 @@
-import type { Camera } from './camera.js';
+import type { ViewCamera as Camera } from './view.js';
 import type { WorldLayer } from './surface.js';
 
 /**
@@ -57,6 +57,18 @@ export class BillboardLayer implements WorldLayer {
       ctx.fillRect(px + pw, bottom, pw * 0.4, postH);
       ctx.fillStyle = '#25213d';
     }
+    this.paintPanel(ctx, left, top, w, h, time);
+  }
+
+  /**
+   * Dessine le panneau (cadre, ampoules, contenu) dans le rectangle donné.
+   * Utilisé par le rendu classique et, via une texture, par le rendu « monolithe ».
+   */
+  paintPanel(ctx: CanvasRenderingContext2D, left: number, top: number, w: number, h: number, time: number) {
+    const d = this.data;
+    if (!d) return;
+    const z = h / BOARD.height;
+    const bottom = top + h;
     // Cadre et écran
     ctx.fillStyle = '#2e2a4a';
     roundRect(ctx, left, top, w, h, z * 0.35);

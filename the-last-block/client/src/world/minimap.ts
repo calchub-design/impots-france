@@ -1,6 +1,9 @@
-import type { Camera } from './camera.js';
+import type { ViewCamera as Camera } from './view.js';
 import type { FaceData } from './face.js';
 import { rgb, strataColor } from './palette.js';
+
+/** Couleur d'une couche pour la mini-carte (le rendu « monolithe » fournit sa propre palette). */
+export type LayerTint = (layer: number, size: number) => [number, number, number];
 
 /**
  * Mini-carte : toute la face à raison d'un pixel par bloc (image mise en
@@ -17,6 +20,7 @@ export class Minimap {
   cubeSize = 1;
   selected: number | null = null;
   markers: { idx: number; color: string }[] = [];
+  tint: LayerTint = (layer, size) => rgb(strataColor(layer, size));
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -53,7 +57,7 @@ export class Minimap {
     this.img.height = f.size;
     const ictx = this.img.getContext('2d')!;
     const data = ictx.createImageData(f.size, f.size);
-    const [r, g, b] = rgb(strataColor(f.layer, Math.max(this.cubeSize, f.size)));
+    const [r, g, b] = this.tint(f.layer, Math.max(this.cubeSize, f.size));
     for (let i = 0; i < f.size * f.size; i++) {
       const hp = f.hp[i];
       const k = hp > 0 ? 0.55 + 0.45 * (hp / f.maxHp) : 0.12;
