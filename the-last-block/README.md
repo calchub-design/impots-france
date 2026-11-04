@@ -44,9 +44,10 @@ npm start         # sert le client et le WebSocket sur PORT (8080)
 ## Tests
 
 ```bash
-npm test             # 113 tests Vitest (10 fichiers), ~6 s
+npm test             # 123 tests Vitest (11 fichiers), ~6 s
 npm run typecheck    # TypeScript (serveur, client, tests, scripts)
-npm run build && npm run e2e   # test réel : deux Chromium (mobile tactile + bureau), 30 vérifications
+npm run build && npm run e2e -- --rendu monolithe   # test réel : deux Chromium (mobile tactile + bureau), 30 vérifications
+npm run e2e -- --rendu classique                     # mêmes scénarios avec le rendu classique
 npm run loadtest -- --bots 100 --seconds 15
 npm run calibrate -- --days 30 --players 200 --minutes 30
 ```
@@ -64,6 +65,7 @@ npm run calibrate -- --days 30 --players 200 --minutes 30
 | `tests/calibration.test.ts` | calibrage et **simulation complète d'une saison de 30 jours** |
 | `tests/migration.test.ts` | migration d'une base au schéma v1 |
 | `tests/world.test.ts` | caméra (limites, zoom ancré, inertie), gestes (toucher/glisser/pincer), modèle de face |
+| `tests/persp.test.ts` | caméra en perspective du rendu monolithe : projection, aller-retour, transition minage ⇄ monument, cadrage, glisser exact |
 | `tests/presence.test.ts` | présence observée : expiration 20 s, coups refusés ignorés, masquage, changement de couche, WebSocket |
 
 Le script `npm run e2e` utilise deux navigateurs distincts : un iPhone 13 émulé, avec gestes tactiles réels via CDP, et un ordinateur. Il vérifie le glisser, le pincer, la sélection et le minage après déplacement, la synchronisation des destructions, la présence, le panneau, l'absence de chevauchement à 5 tailles d'écran, un SIGKILL du serveur, `prefers-reduced-motion`, la fin de saison, l'absence d'erreur JavaScript, et mesure les performances. Détails et résultats : [docs/REFONTE.md](docs/REFONTE.md).
@@ -90,6 +92,10 @@ npm run calibrate -- --days 30 --players 200 --minutes 30
 Le script propose `CUBE_SIZE`, `BLOCK_BASE_HP`, `BLOCK_HP_PER_LAYER` et `SEASON_DURATION_HOURS=720` pour que le cube soit fini vers 90 % de la saison (option `--target`), en fonction de la fréquentation estimée. Pendant la saison, `GET /api/season/projection` (et l'onglet *Saisons*) donne le rythme moyen réel et la date de fin estimée.
 
 **Achèvement anticipé** : si le cube est terminé avant l'échéance, la saison se clôt immédiatement (`endReason: completed`). La Pierre finale et le champion sont attribués, et l'avance sur l'échéance est indiquée (`completedEarlyMs`, fenêtre de fin de saison, archives). La saison suivante démarre après `SEASON_COOLDOWN_SECONDS`, avec une nouvelle échéance complète. Si l'échéance arrive avant la fin du cube, la saison se clôt par `timeout` sans Pierre finale.
+
+## Rendu « monolithe » (par défaut)
+
+Le cube est rendu en **vraie perspective** : une vue de minage où la surface fuit vers l'horizon, et une **vue monumentale** (▦ ou V, ou en pinçant vers l'arrière) qui montre le monolithe entier suspendu dans le vide cosmique. L'univers est futuriste et mystérieux : pierre-tech, lignes d'énergie, glyphes gravés, fissures lumineuses. Le rendu classique, plus léger, reste disponible (Profil → Rendu du cube, ou `?rendu=classique`) et sert de repli automatique sur les appareils trop lents. Détails, compromis, performances mesurées et captures : [docs/REFONTE-MONOLITHE.md](docs/REFONTE-MONOLITHE.md).
 
 ## Refonte « cube colossal navigable »
 
