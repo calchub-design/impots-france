@@ -27,6 +27,11 @@ if (!existsSync('dist/server/server/index.js') || !existsSync('dist/client/index
 }
 const outIdx = process.argv.indexOf('--out');
 const OUT = resolve(outIdx > 0 ? process.argv[outIdx + 1] : 'e2e-output');
+// --rendu monolithe : mêmes scénarios avec le rendu en perspective.
+const renduIdx = process.argv.indexOf('--rendu');
+const RENDU = renduIdx > 0 ? process.argv[renduIdx + 1] : 'classique';
+const Q = `rendu=${RENDU}`;
+console.log(`Rendu testé : ${RENDU}`);
 mkdirSync(OUT, { recursive: true });
 
 const dir = mkdtempSync(join(tmpdir(), 'tlb-e2e-'));
@@ -154,7 +159,7 @@ try {
 
   // 1. Miner dans les secondes qui suivent l'ouverture (bloc présélectionné).
   const t0 = Date.now();
-  await A.goto(BASE);
+  await A.goto(`${BASE}/?${Q}`);
   await ready(A);
   const firstSel = await sel(A);
   await A.tap('#mine-btn');
@@ -162,7 +167,7 @@ try {
   const tFirst = Date.now() - t0;
   metrics.premierCoupMs = tFirst;
   check('premier coup confirmé peu après l\'ouverture, sans rien régler', firstSel !== null && tFirst < 6000, `${(tFirst / 1000).toFixed(1)} s`);
-  await B.goto(BASE);
+  await B.goto(`${BASE}/?${Q}`);
   await ready(B);
   const idA = await A.evaluate(() => window.tlb.state.player.id);
   const idB = await B.evaluate(() => window.tlb.state.player.id);
@@ -174,6 +179,7 @@ try {
   const cx = vb.x + vb.width / 2;
   const cy = vb.y + vb.height / 2;
   const view0 = await visible(A);
+  const start0 = await cam(A);
   const c0 = await cam(A);
   await T.drag(cx + 120, cy, -240, 0);
   await A.waitForTimeout(900);
@@ -194,13 +200,19 @@ try {
   check('le zoom conserve la sélection', (await sel(A)) === selBeforeZoom);
 
   // 3. Sélectionner après déplacement un bloc qui n'était pas visible au départ, puis le miner.
-  await T.tap(cx + 30, cy + 40);
+  // Toucher au-dessus du centre : toujours sur la face (en perspective, le bas de
+  // l'écran peut montrer la falaise et le vide au-delà du bord sud).
+  await T.tap(cx + 30, cy - 40);
   await A.waitForTimeout(200);
   const target = await sel(A);
   const tx = target % SIZE;
   const ty = Math.floor(target / SIZE);
-  const wasOffscreen = tx < view0.minX || tx + 1 > view0.maxX || ty < view0.minY || ty + 1 > view0.maxY;
-  check('toucher bref : sélection d\'un bloc hors de la vue initiale', target !== null && wasOffscreen, `bloc (${tx}, ${ty})`);
+  // En vue de dessus : le bloc n'était pas à l'écran au départ. En perspective, l'écran montre
+  // déjà une grande partie de la face : on exige un bloc éloigné du point visé initial.
+  const wasOffscreen = RENDU === 'monolithe'
+    ? Math.hypot(tx + 0.5 - start0.x, ty + 0.5 - start0.y) >= 4
+    : tx < view0.minX || tx + 1 > view0.maxX || ty < view0.minY || ty + 1 > view0.maxY;
+  check('toucher bref après déplacement : sélection d\'un bloc éloigné du point de départ', target !== null && wasOffscreen, `bloc (${tx}, ${ty})`);
   // Le bureau regarde le même endroit.
   await B.evaluate(([x, y]) => {
     window.tlb.world.camera.animateTo({ x: x + 0.5, y: y + 0.5, zoom: 44 }, 0);
@@ -306,20 +318,34 @@ try {
   // 7. Panneau monumental.
   await A.tap('#board-btn');
   await A.waitForTimeout(900);
-  const boardState = await A.evaluate(() => ({ minY: window.tlb.world.camera.visibleWorld().minY, banner: document.querySelector('#banner').hidden }));
-  check('« Regarder le panneau » : caméra vers le panneau, bandeau masqué (pas de doublon)', boardState.minY < -5 && boardState.banner === true);
+  const boardState = await A.evaluate(() => ({
+    minY: window.tlb.world.camera.visibleWorld().minY,
+    boardPx: window.tlb.world.billboardScreenWidth ?? null,
+    banner: document.querySelector('#banner').hidden,
+  }));
+  const boardSeen = RENDU === 'monolithe' ? boardState.boardPx > 100 : boardState.minY < -5;
+  check('« Regarder le panneau » : panneau à l\'écran, bandeau masqué (pas de doublon)', boardSeen && boardState.banner === true, JSON.stringify(boardState));
   await A.screenshot({ path: join(OUT, 'mobile-panneau.png') });
   await A.tap('#recenter');
   await A.waitForTimeout(700);
   check('Recentrer : retour au bloc sélectionné, bandeau réaffiché', !(await A.evaluate(() => document.querySelector('#banner').hidden)));
 
-  // 8. Vue d'ensemble.
+  // 8. Vue d'ensemble : fenêtre isométrique (classique) ou vue monumentale en scène (monolithe).
   await A.tap('#overview-btn');
-  await A.waitForTimeout(400);
-  const ovOpen = await A.evaluate(() => !document.querySelector('#overview').hidden);
-  await A.screenshot({ path: join(OUT, 'mobile-vue-ensemble.png') });
-  await A.tap('#overview-close');
-  check("vue d'ensemble : ouverture et fermeture", ovOpen && (await A.evaluate(() => document.querySelector('#overview').hidden)));
+  await A.waitForTimeout(RENDU === 'monolithe' ? 1200 : 400);
+  if (RENDU === 'monolithe') {
+    const mono = await A.evaluate(() => ({ t: window.tlb.world.camera.t, cls: document.querySelector('#viewport').classList.contains('monumental') }));
+    await A.screenshot({ path: join(OUT, 'mobile-vue-monumentale.png') });
+    await A.tap('#overview-btn');
+    await A.waitForTimeout(800);
+    const back = await A.evaluate(() => window.tlb.world.camera.t);
+    check('vue monumentale : aller (cube entier) et retour à la vue de minage', mono.t > 0.95 && mono.cls && back < 0.05, `t ${mono.t.toFixed(2)} → ${back.toFixed(2)}`);
+  } else {
+    const ovOpen = await A.evaluate(() => !document.querySelector('#overview').hidden);
+    await A.screenshot({ path: join(OUT, 'mobile-vue-ensemble.png') });
+    await A.tap('#overview-close');
+    check("vue d'ensemble : ouverture et fermeture", ovOpen && (await A.evaluate(() => document.querySelector('#overview').hidden)));
+  }
 
   // 9. Mise en page : aucun chevauchement à 360, 390, tablette et bureau (avec une notification affichée).
   const layouts = [
@@ -333,13 +359,10 @@ try {
     const ctx = await bMobile.newContext(opts);
     const p = await ctx.newPage();
     watch(p, name);
-    await p.goto(`${BASE}/?profil=mise-en-page-${name}`);
+    await p.goto(`${BASE}/?${Q}&profil=mise-en-page-${name}`);
     await ready(p);
     await p.evaluate(() => document.querySelector('#overview-btn').click());
     await p.evaluate(() => document.querySelector('#overview-close').click());
-    // Une notification réelle affichée pendant le contrôle : refus du serveur (pseudo déjà pris).
-    await p.evaluate(() => window.tlb.socket.send({ t: 'setName', name: 'Alice' }));
-    await p.waitForSelector('#toasts .toast', { timeout: 3000 });
     await p.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p' })));
     await p.waitForTimeout(700);
     await p.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyC', key: 'c' })));
@@ -348,6 +371,9 @@ try {
     await p.waitForTimeout(300);
     await p.locator('#mine-btn').dispatchEvent('pointerup');
     await p.waitForTimeout(600);
+    // Une notification réelle affichée pendant le contrôle : refus du serveur (pseudo déjà pris).
+    await p.evaluate(() => window.tlb.socket.send({ t: 'setName', name: 'Alice' }));
+    await p.waitForSelector('#toasts .toast', { timeout: 3000 });
     const toastShown = await p.locator('#toasts .toast').count();
     const bad = await overlaps(p);
     if (!toastShown) bad.push('notification absente pendant le contrôle');
@@ -407,7 +433,7 @@ try {
   const ctxR = await bMobile.newContext({ ...playwright.devices['iPhone 13'], reducedMotion: 'reduce' });
   const R = await ctxR.newPage();
   watch(R, 'mouvement-réduit');
-  await R.goto(`${BASE}/?profil=reduit`);
+  await R.goto(`${BASE}/?${Q}&profil=reduit`);
   await ready(R);
   const TR = await touchApi(R);
   const rb = await R.locator('#world').boundingBox();
