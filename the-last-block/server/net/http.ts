@@ -5,7 +5,28 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { SKINS } from '../../shared/skins.js';
 import type { AppConfig } from '../config.js';
 import type { GameEngine } from '../game/engine.js';
+import { SlidingWindowLimiter } from '../game/rateLimiter.js';
 import { GameError } from '../game/validation.js';
+import { clientIp } from './ip.js';
+
+/**
+ * Politique de sécurité du contenu de la page servie en production : aucun
+ * script ou style inline, pas d'intégration dans un cadre tiers. Limite
+ * l'impact d'une éventuelle injection (le jeton invité est en localStorage).
+ */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  "connect-src 'self' ws: wss:",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+const ADMIN_FAILURES = 10;
+const ADMIN_FAILURE_WINDOW_MS = 10 * 60_000;
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -23,6 +44,7 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
     'content-length': Buffer.byteLength(data),
   });
   res.end(data);
@@ -58,6 +80,7 @@ export interface HttpDeps {
 
 export function createHttpHandler({ config, engine, stats }: HttpDeps) {
   const staticRoot = resolve(config.staticDir);
+  const adminFailures = new SlidingWindowLimiter(ADMIN_FAILURES, ADMIN_FAILURE_WINDOW_MS);
 
   return async function handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -82,6 +105,10 @@ export function createHttpHandler({ config, engine, stats }: HttpDeps) {
 
       if (path === '/api/stats' && req.method === 'GET') return json(res, 200, stats());
 
+      if (path === '/api/season/projection' && req.method === 'GET') {
+        return json(res, 200, { projection: engine.projection() });
+      }
+
       if (path === '/api/seasons' && req.method === 'GET') {
         return json(res, 200, { seasons: engine.listSeasons(50), nextSeasonAt: engine.upcomingSeasonAt });
       }
@@ -94,16 +121,24 @@ export function createHttpHandler({ config, engine, stats }: HttpDeps) {
 
       if (path.startsWith('/api/admin/')) {
         if (!config.adminToken) return json(res, 403, { error: 'admin_disabled', message: 'ADMIN_TOKEN non défini.' });
+        const ip = clientIp(req, config.security.trustProxy);
+        const now = Date.now();
+        if (adminFailures.isBlocked(ip, now)) return json(res, 429, { error: 'too_many_attempts' });
         const auth = req.headers.authorization ?? '';
         const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-        if (!token || !safeEqual(token, config.adminToken)) return json(res, 401, { error: 'unauthorized' });
+        if (!token || !safeEqual(token, config.adminToken)) {
+          adminFailures.tryTake(ip, now);
+          return json(res, 401, { error: 'unauthorized' });
+        }
         if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
-        const body = (await readBody(req)) as { name?: unknown; cubeSize?: unknown; durationHours?: unknown };
+        const body = (await readBody(req)) as { name?: unknown; cubeSize?: unknown; durationHours?: unknown; baseHp?: unknown; hpPerLayer?: unknown };
         if (path === '/api/admin/season/start') {
           const s = engine.startSeason({
             name: typeof body.name === 'string' ? body.name.slice(0, 40) : undefined,
             cubeSize: typeof body.cubeSize === 'number' ? body.cubeSize : undefined,
             durationMs: typeof body.durationHours === 'number' ? body.durationHours * 3600_000 : undefined,
+            baseHp: typeof body.baseHp === 'number' ? body.baseHp : undefined,
+            hpPerLayer: typeof body.hpPerLayer === 'number' ? body.hpPerLayer : undefined,
           });
           return json(res, 200, { season: engine.seasonInfo(s) });
         }
@@ -117,7 +152,14 @@ export function createHttpHandler({ config, engine, stats }: HttpDeps) {
 
       // Fichiers statiques du client compilé (production).
       if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method_not_allowed' });
-      const rel = normalize(decodeURIComponent(path)).replace(/^([/\\])+/, '');
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(path);
+      } catch {
+        return json(res, 400, { error: 'bad_path' });
+      }
+      if (decoded.includes('\0')) return json(res, 400, { error: 'bad_path' });
+      const rel = normalize(decoded).replace(/^([/\\])+/, '');
       let file = join(staticRoot, rel);
       if (!file.startsWith(staticRoot + sep) && file !== staticRoot) return json(res, 400, { error: 'bad_path' });
       if (!existsSync(file) || statSync(file).isDirectory()) file = join(staticRoot, 'index.html');
@@ -129,6 +171,8 @@ export function createHttpHandler({ config, engine, stats }: HttpDeps) {
         'content-type': MIME[extname(file)] ?? 'application/octet-stream',
         'cache-control': file.includes(`${sep}assets${sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache',
         'x-content-type-options': 'nosniff',
+        'referrer-policy': 'no-referrer',
+        ...(file.endsWith('.html') ? { 'content-security-policy': CSP, 'x-frame-options': 'DENY' } : {}),
       });
       if (req.method === 'HEAD') return res.end();
       createReadStream(file).pipe(res);

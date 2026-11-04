@@ -75,14 +75,18 @@ const scene = new Scene($<HTMLCanvasElement>('#scene'), (block) => {
   mineSelected();
 });
 
-const socket = new GameSocket(profile, onMessage, onConnState);
+const socket = new GameSocket(profile, onMessage, onConnState, (text) => toast(text, 'info'));
 socket.connect();
 
 function onConnState(s: ConnState) {
   const node = $('#conn-status');
   node.dataset.state = s;
-  node.querySelector('.label')!.textContent = s === 'online' ? 'Connecté' : s === 'connecting' ? 'Connexion…' : 'Reconnexion…';
+  node.querySelector('.label')!.textContent =
+    s === 'online' ? 'Connecté' : s === 'connecting' ? 'Connexion…' : s === 'replaced' ? 'Ouvert ailleurs — toucher pour reprendre' : 'Reconnexion…';
 }
+$('#conn-status').addEventListener('click', () => {
+  if ($('#conn-status').dataset.state === 'replaced') socket.restart();
+});
 
 function myColor() {
   return skinById(state.player?.skin ?? 'classic').color;
@@ -178,6 +182,7 @@ function onMessage(msg: ServerMessage) {
       toast(msg.message, 'bad');
       break;
     case 'pong':
+    case 'token':
       break;
   }
 }
@@ -500,10 +505,15 @@ $<HTMLFormElement>('#name-form').addEventListener('submit', (e) => {
   socket.send({ t: 'setName', name: formValue(e.target as HTMLFormElement, 'name') });
   (document.activeElement as HTMLElement | null)?.blur();
 });
+$('#rotate-token').addEventListener('click', () => {
+  if (confirm('Générer un nouveau jeton ? Vos autres onglets et appareils seront déconnectés.')) socket.send({ t: 'rotateToken' });
+});
 $('#reset-profile').addEventListener('click', () => {
-  if (!confirm('Oublier ce compte invité sur cet appareil ? Il sera impossible de le récupérer.')) return;
+  if (!confirm('Abandonner ce compte invité ? Le jeton sera révoqué sur le serveur : ce compte ne pourra plus jamais être repris. Vos scores restent au classement.')) return;
+  // Le serveur ferme alors la session (4003) ; la reconnexion automatique
+  // crée un nouveau compte puisque le jeton local est effacé.
+  socket.send({ t: 'logout' });
   socket.forgetToken();
-  socket.restart();
 });
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
+import { nameKey } from '../game/validation.js';
 import type {
   BrigadeContributionRow,
   BrigadeRow,
@@ -18,6 +19,7 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS players (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  name_key TEXT,
   token_hash TEXT UNIQUE,
   skin TEXT NOT NULL DEFAULT 'classic',
   auth_provider TEXT NOT NULL DEFAULT 'guest',
@@ -126,15 +128,37 @@ export class SqliteStore implements GameStore {
   private cache = new Map<string, StatementSync>();
   private txDepth = 0;
 
-  constructor(path: string) {
+  constructor(path: string, opts: { synchronous?: 'NORMAL' | 'FULL' } = {}) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA journal_mode = WAL;');
-    this.db.exec('PRAGMA synchronous = NORMAL;');
+    // NORMAL (défaut) : aucune perte en cas d'arrêt brutal du PROCESSUS ; les
+    // dernières transactions peuvent être perdues (base cohérente) en cas de
+    // coupure de courant / crash du système. FULL : durable même dans ce cas.
+    this.db.exec(`PRAGMA synchronous = ${opts.synchronous === 'FULL' ? 'FULL' : 'NORMAL'};`);
     this.db.exec('PRAGMA foreign_keys = ON;');
     this.db.exec('PRAGMA busy_timeout = 5000;');
     this.db.exec(SCHEMA);
-    this.db.prepare("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '1')").run();
+    this.migrate();
+  }
+
+  /** Migrations idempotentes des bases créées par une version antérieure. */
+  private migrate() {
+    const cols = this.db.prepare('PRAGMA table_info(players)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'name_key')) this.db.exec('ALTER TABLE players ADD COLUMN name_key TEXT');
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS players_name_key ON players(name_key)');
+    // Rattrapage : pseudos sans clé (v1). En cas de doublon historique, la clé
+    // reste NULL : ce joueur devra changer de pseudo pour en réserver un.
+    const missing = this.db.prepare('SELECT id, name FROM players WHERE name_key IS NULL').all() as { id: string; name: string }[];
+    const upd = this.db.prepare('UPDATE players SET name_key = ? WHERE id = ?');
+    for (const m of missing) {
+      try {
+        upd.run(nameKey(m.name), m.id);
+      } catch {
+        /* doublon historique */
+      }
+    }
+    this.db.prepare("INSERT INTO meta(key, value) VALUES ('schema_version', '2') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   }
 
   private st(sql: string): StatementSync {
@@ -185,11 +209,20 @@ export class SqliteStore implements GameStore {
 
   // --- Joueurs -------------------------------------------------------------
 
-  createPlayer(p: { id: string; name: string; tokenHash: string | null; skin: string; authProvider: string; createdAt: number }): void {
+  createPlayer(p: { id: string; name: string; nameKey: string; tokenHash: string | null; skin: string; authProvider: string; createdAt: number }): void {
     this.run(
-      'INSERT INTO players(id, name, token_hash, skin, auth_provider, created_at) VALUES (?,?,?,?,?,?)',
-      p.id, p.name, p.tokenHash, p.skin, p.authProvider, p.createdAt,
+      'INSERT INTO players(id, name, name_key, token_hash, skin, auth_provider, created_at) VALUES (?,?,?,?,?,?,?)',
+      p.id, p.name, p.nameKey, p.tokenHash, p.skin, p.authProvider, p.createdAt,
     );
+  }
+  countPlayers(): number {
+    return this.get<{ n: number }>('SELECT COUNT(*) AS n FROM players')!.n;
+  }
+  getPlayerByNameKey(key: string) {
+    return this.get<PlayerRow>('SELECT * FROM players WHERE name_key = ?', key);
+  }
+  setTokenHash(id: string, hash: string | null) {
+    this.run('UPDATE players SET token_hash = ? WHERE id = ?', hash, id);
   }
   getPlayer(id: string) {
     return this.get<PlayerRow>('SELECT * FROM players WHERE id = ?', id);
@@ -197,8 +230,8 @@ export class SqliteStore implements GameStore {
   getPlayerByTokenHash(hash: string) {
     return this.get<PlayerRow>('SELECT * FROM players WHERE token_hash = ?', hash);
   }
-  setPlayerName(id: string, name: string) {
-    this.run('UPDATE players SET name = ? WHERE id = ?', name, id);
+  setPlayerName(id: string, name: string, key: string) {
+    this.run('UPDATE players SET name = ?, name_key = ? WHERE id = ?', name, key, id);
   }
   setPlayerSkin(id: string, skin: string) {
     this.run('UPDATE players SET skin = ? WHERE id = ?', skin, id);
@@ -211,6 +244,9 @@ export class SqliteStore implements GameStore {
 
   getActiveSeason() {
     return this.get<SeasonRow>("SELECT * FROM seasons WHERE status = 'active' LIMIT 1");
+  }
+  getLastEndedSeason() {
+    return this.get<SeasonRow>("SELECT * FROM seasons WHERE status = 'ended' ORDER BY ended_at DESC, id DESC LIMIT 1");
   }
   getSeason(id: number) {
     return this.get<SeasonRow>('SELECT * FROM seasons WHERE id = ?', id);
@@ -271,6 +307,9 @@ export class SqliteStore implements GameStore {
       h.season_id, h.player_id, h.action_id, h.layer, h.idx, h.hp_after, h.destroyed, h.brigade_id, h.at,
     );
   }
+  lastDestroyingHit(seasonId: number) {
+    return this.get<HitRow>('SELECT * FROM hits WHERE season_id = ? AND destroyed = 1 ORDER BY id DESC LIMIT 1', seasonId);
+  }
   countHits(seasonId: number): number {
     return this.get<{ n: number }>('SELECT COUNT(*) AS n FROM hits WHERE season_id = ?', seasonId)!.n;
   }
@@ -315,7 +354,7 @@ export class SqliteStore implements GameStore {
   createBrigade(b: BrigadeRow) {
     this.run(
       'INSERT INTO brigades(id, name, name_key, invite_code, owner_id, created_at) VALUES (?,?,?,?,?,?)',
-      b.id, b.name, b.name.toLowerCase(), b.invite_code, b.owner_id, b.created_at,
+      b.id, b.name, nameKey(b.name), b.invite_code, b.owner_id, b.created_at,
     );
   }
   deleteBrigade(id: string) {
@@ -328,7 +367,7 @@ export class SqliteStore implements GameStore {
     return this.get<BrigadeRow>('SELECT id, name, invite_code, owner_id, created_at FROM brigades WHERE invite_code = ?', code);
   }
   getBrigadeByName(name: string) {
-    return this.get<BrigadeRow>('SELECT id, name, invite_code, owner_id, created_at FROM brigades WHERE name_key = ?', name.toLowerCase());
+    return this.get<BrigadeRow>('SELECT id, name, invite_code, owner_id, created_at FROM brigades WHERE name_key = ?', nameKey(name));
   }
   setBrigadeOwner(id: string, ownerId: string) {
     this.run('UPDATE brigades SET owner_id = ? WHERE id = ?', ownerId, id);

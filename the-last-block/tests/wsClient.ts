@@ -13,9 +13,13 @@ export class TestClient {
 
   constructor(private readonly url: string) {}
 
+  /** Code et motif de fermeture de la dernière connexion. */
+  closed!: Promise<{ code: number; reason: string }>;
+
   async connect(token?: string, name?: string): Promise<WelcomeMessage> {
     this.received = [];
     this.ws = new WebSocket(this.url);
+    this.closed = new Promise((resolve) => this.ws.once('close', (code, reason) => resolve({ code, reason: reason.toString() })));
     this.ws.on('message', (data) => {
       const msg = JSON.parse(data.toString()) as ServerMessage;
       this.received.push(msg);
@@ -38,7 +42,8 @@ export class TestClient {
     return this.welcome;
   }
 
-  send(msg: ClientMessage | Record<string, unknown>) {
+  /** Volontairement non typé strictement : les tests envoient aussi des messages forgés. */
+  send(msg: ClientMessage | object) {
     this.ws.send(JSON.stringify(msg));
   }
 

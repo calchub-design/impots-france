@@ -10,6 +10,7 @@ import {
   type PlaytimeInfo,
   type PublicPlayer,
   type SeasonInfo,
+  type SeasonProjection,
 } from '../../shared/protocol.js';
 import { DEFAULT_SKIN, isValidSkin } from '../../shared/skins.js';
 import type { GameRules } from '../config.js';
@@ -23,6 +24,7 @@ import {
   cleanPlayerName,
   generateInviteCode,
   guestName,
+  nameKey,
   normalizeInviteCode,
 } from './validation.js';
 
@@ -69,6 +71,8 @@ interface Contribution {
 
 interface ActiveState {
   season: SeasonRow;
+  totalHp: number;
+  remainingHp: number;
   size: number;
   perLayer: number;
   hp: Int32Array;
@@ -85,6 +89,8 @@ export interface EngineOptions {
 }
 
 const ARCHIVE_TOP = 100;
+const BRIGADE_JOIN_FAILURES = 10;
+const BRIGADE_JOIN_WINDOW_MS = 10 * 60_000;
 
 class AlreadyDestroyed extends Error {}
 
@@ -106,6 +112,10 @@ export class GameEngine {
   private rankDirty = true;
   private rankIndex = new Map<string, number>();
   private sortedAt = 0;
+  /** Échecs d'adhésion par joueur : freine la recherche exhaustive de codes. */
+  private readonly joinFailures = new SlidingWindowLimiter(BRIGADE_JOIN_FAILURES, BRIGADE_JOIN_WINDOW_MS);
+  /** Coups par minute de la saison (fenêtre glissante d'une heure) pour l'estimation de fin. */
+  private hitBuckets = new Map<number, number>();
 
   constructor(
     readonly store: GameStore,
@@ -115,7 +125,27 @@ export class GameEngine {
     this.now = opts.now ?? Date.now;
     this.limiter = new SlidingWindowLimiter(rules.maxActionsPerSecond, rules.rateWindowMs);
     const active = store.getActiveSeason();
-    if (active) this.loadSeason(active);
+    if (active) {
+      this.loadSeason(active);
+      this.recoverCompletedSeason();
+    }
+    if (!this.state) {
+      // Respecte le délai inter-saison même après un redémarrage.
+      const last = store.getLastEndedSeason();
+      if (last?.ended_at != null && rules.autoStartSeason) this.nextSeasonAt = last.ended_at + rules.seasonCooldownMs;
+    }
+  }
+
+  /**
+   * Récupération après arrêt brutal : si le dernier bloc a été détruit (coup
+   * validé en base) mais que la clôture n'a pas eu lieu, on clôture la saison
+   * avec la Pierre finale retrouvée dans le journal des coups.
+   */
+  private recoverCompletedSeason() {
+    const st = this.state;
+    if (!st || st.currentLayer < st.size) return;
+    const last = this.store.lastDestroyingHit(st.season.id);
+    this.endSeason('completed', last?.player_id ?? null, last?.at);
   }
 
   on(listener: (e: EngineEvent) => void): () => void {
@@ -131,22 +161,58 @@ export class GameEngine {
   // Joueurs
   // =========================================================================
 
-  /** Reprend un compte invité par jeton, ou en crée un nouveau. */
-  connectGuest(token: unknown, requestedName?: unknown): { player: PublicPlayer; token?: string } {
-    if (isWellFormedToken(token)) {
-      const row = this.store.getPlayerByTokenHash(hashToken(token));
-      if (row) return { player: this.publicPlayer(row.id) };
+  /**
+   * Reprise d'un compte invité. L'identité est déterminée UNIQUEMENT par le
+   * jeton secret (comparé via son empreinte SHA-256) ; aucun identifiant
+   * fourni par le client n'est jamais utilisé. Renvoie null si le jeton est
+   * absent, mal formé, inconnu ou révoqué.
+   */
+  resumeGuest(token: unknown): PublicPlayer | null {
+    if (!isWellFormedToken(token)) return null;
+    const row = this.store.getPlayerByTokenHash(hashToken(token));
+    return row ? this.publicPlayer(row.id) : null;
+  }
+
+  /** Crée un compte invité et renvoie son jeton (remis une seule fois). */
+  createGuest(requestedName?: unknown): { player: PublicPlayer; token: string } {
+    let name: string | null = null;
+    if (requestedName !== undefined) {
+      try {
+        const n = cleanPlayerName(requestedName);
+        if (!this.store.getPlayerByNameKey(nameKey(n))) name = n;
+      } catch {
+        name = null;
+      }
     }
-    let name: string;
-    try {
-      name = requestedName === undefined ? guestName() : cleanPlayerName(requestedName);
-    } catch {
-      name = guestName();
+    for (let attempt = 0; name === null; attempt++) {
+      const n = guestName(attempt);
+      if (!this.store.getPlayerByNameKey(nameKey(n))) name = n;
+      if (attempt > 50) throw new GameError('name_exhausted', 'Impossible de générer un pseudo.');
     }
-    const newToken = generateGuestToken();
+    const token = generateGuestToken();
     const id = randomUUID();
-    this.store.createPlayer({ id, name, tokenHash: hashToken(newToken), skin: DEFAULT_SKIN, authProvider: 'guest', createdAt: this.now() });
-    return { player: this.publicPlayer(id), token: newToken };
+    this.store.createPlayer({ id, name, nameKey: nameKey(name), tokenHash: hashToken(token), skin: DEFAULT_SKIN, authProvider: 'guest', createdAt: this.now() });
+    return { player: this.publicPlayer(id), token };
+  }
+
+  /** Compatibilité (tests, robots) : reprise si possible, sinon création. */
+  connectGuest(token: unknown, requestedName?: unknown): { player: PublicPlayer; token?: string } {
+    const resumed = this.resumeGuest(token);
+    return resumed ? { player: resumed } : this.createGuest(requestedName);
+  }
+
+  /** Rotation : nouveau jeton, l'ancien devient immédiatement invalide. */
+  rotateToken(playerId: string): string {
+    this.player(playerId);
+    const token = generateGuestToken();
+    this.store.setTokenHash(playerId, hashToken(token));
+    return token;
+  }
+
+  /** Révocation : plus aucun jeton ne donne accès à ce compte invité. */
+  revokeToken(playerId: string): void {
+    this.player(playerId);
+    this.store.setTokenHash(playerId, null);
   }
 
   private player(id: string): PlayerCache {
@@ -176,8 +242,11 @@ export class GameEngine {
 
   setName(playerId: string, raw: unknown): PublicPlayer {
     const name = cleanPlayerName(raw);
+    const key = nameKey(name);
     const p = this.player(playerId);
-    this.store.setPlayerName(playerId, name);
+    const holder = this.store.getPlayerByNameKey(key);
+    if (holder && holder.id !== playerId) throw new GameError('name_taken', 'Ce pseudo est déjà utilisé.');
+    this.store.setPlayerName(playerId, name, key);
     p.name = name;
     this.emit({ type: 'profileChanged', playerId });
     if (p.brigadeId) this.emitBrigade(p.brigadeId);
@@ -233,7 +302,7 @@ export class GameEngine {
 
     const now = this.now();
     if (now >= st.season.ends_at) {
-      this.endSeason('timeout');
+      this.endSeason('timeout', null, st.season.ends_at);
       return { ok: false, reason: 'no_active_season' };
     }
 
@@ -296,6 +365,10 @@ export class GameEngine {
     // 6. Mise à jour de l'état mémoire (après COMMIT uniquement).
     const destroyed = hpAfter === 0;
     st.hp[cell] = hpAfter;
+    st.remainingHp--;
+    const minute = Math.floor(now / 60_000);
+    this.hitBuckets.set(minute, (this.hitBuckets.get(minute) ?? 0) + 1);
+    if (this.hitBuckets.size > 70) for (const k of this.hitBuckets.keys()) if (k < minute - 60) this.hitBuckets.delete(k);
     p.playMs = newPlayMs;
     p.lastActionAt = now;
     bump(st.players, playerId, destroyed, now);
@@ -354,7 +427,10 @@ export class GameEngine {
     for (const c of this.store.loadBrigadeContributions(season.id)) {
       brigades.set(c.brigade_id, { hits: c.hits, blocks: c.blocks, lastHitAt: c.last_hit_at });
     }
-    const st: ActiveState = { season, size, perLayer, hp, layerMaxHp, layerRemaining, currentLayer: 0, destroyed, players, brigades };
+    let remainingHp = 0;
+    for (let i = 0; i < hp.length; i++) remainingHp += hp[i];
+    const totalHp = layerMaxHp.reduce((s, h) => s + h * perLayer, 0);
+    const st: ActiveState = { season, totalHp, remainingHp, size, perLayer, hp, layerMaxHp, layerRemaining, currentLayer: 0, destroyed, players, brigades };
     st.currentLayer = this.firstLayerWithBlocks(st);
     this.state = st;
     this.sortedPlayers = null;
@@ -368,19 +444,23 @@ export class GameEngine {
     return this.state ? null : this.nextSeasonAt;
   }
 
-  startSeason(opts: { name?: string; cubeSize?: number; durationMs?: number } = {}): SeasonRow {
+  startSeason(opts: { name?: string; cubeSize?: number; durationMs?: number; baseHp?: number; hpPerLayer?: number } = {}): SeasonRow {
     if (this.state) throw new GameError('season_active', 'Une saison est déjà en cours.');
     const now = this.now();
     const count = this.store.listSeasons(1)[0]?.id ?? 0;
     const cubeSize = opts.cubeSize ?? this.rules.cubeSize;
     if (!Number.isInteger(cubeSize) || cubeSize < 1 || cubeSize > 64) throw new GameError('invalid_size', 'Taille de cube invalide (1-64).');
     const durationMs = opts.durationMs ?? this.rules.seasonDurationMs;
-    if (!Number.isFinite(durationMs) || durationMs < 1000) throw new GameError('invalid_duration', 'Durée invalide.');
+    if (!Number.isFinite(durationMs) || durationMs < 1000 || durationMs > 400 * 24 * 3600_000) throw new GameError('invalid_duration', 'Durée invalide.');
+    const baseHp = opts.baseHp ?? this.rules.baseHp;
+    const hpPerLayer = opts.hpPerLayer ?? this.rules.hpPerLayer;
+    if (!Number.isInteger(baseHp) || baseHp < 1 || baseHp > 1_000_000) throw new GameError('invalid_hp', 'Résistance de base invalide.');
+    if (!Number.isInteger(hpPerLayer) || hpPerLayer < 0 || hpPerLayer > 1_000_000) throw new GameError('invalid_hp', 'Progression de résistance invalide.');
     const season = this.store.createSeason({
       name: opts.name?.trim() || `Saison ${count + 1}`,
       cubeSize,
-      baseHp: this.rules.baseHp,
-      hpPerLayer: this.rules.hpPerLayer,
+      baseHp,
+      hpPerLayer,
       startsAt: now,
       endsAt: now + durationMs,
     });
@@ -395,10 +475,10 @@ export class GameEngine {
    * élevée, départagé par l'antériorité du score), la brigade championne
    * (brigades éligibles uniquement) et archive les classements.
    */
-  endSeason(reason: 'completed' | 'timeout' | 'admin', finalStonePlayerId: string | null = null): SeasonInfo {
+  endSeason(reason: 'completed' | 'timeout' | 'admin', finalStonePlayerId: string | null = null, endedAt?: number): SeasonInfo {
     const st = this.state;
     if (!st) throw new GameError('no_active_season', 'Aucune saison en cours.');
-    const now = this.now();
+    const now = endedAt ?? this.now();
     const ranking = this.sortPlayers(st);
     const brigadeRanking = this.brigadeBoard(Number.MAX_SAFE_INTEGER);
     const champion = ranking[0]?.[0] ?? null;
@@ -429,6 +509,7 @@ export class GameEngine {
     this.state = null;
     this.sortedPlayers = null;
     this.nextSeasonAt = this.rules.autoStartSeason ? now + this.rules.seasonCooldownMs : null;
+    this.hitBuckets.clear();
     const info = this.seasonInfo(this.store.getSeason(st.season.id)!);
     this.emit({ type: 'seasonEnded', season: info, nextSeasonAt: this.nextSeasonAt });
     return info;
@@ -438,13 +519,14 @@ export class GameEngine {
   tick(): void {
     const now = this.now();
     if (this.state && now >= this.state.season.ends_at) {
-      this.endSeason('timeout');
+      this.endSeason('timeout', null, this.state.season.ends_at);
     }
     if (!this.state && this.rules.autoStartSeason) {
       if (this.nextSeasonAt === null) this.nextSeasonAt = now;
       if (now >= this.nextSeasonAt) this.startSeason();
     }
     this.limiter.prune(now);
+    this.joinFailures.prune(now);
   }
 
   seasonInfo(s: SeasonRow): SeasonInfo {
@@ -465,6 +547,34 @@ export class GameEngine {
           null)
         : null,
       finalStoneName: name(s.final_stone_player_id),
+      completedEarlyMs: s.end_reason === 'completed' && s.ended_at !== null ? Math.max(0, s.ends_at - s.ended_at) : null,
+    };
+  }
+
+  /** Avancement et estimation de fin de la saison active (calibrage, affichage). */
+  projection(): SeasonProjection | null {
+    const st = this.state;
+    if (!st) return null;
+    const now = this.now();
+    const done = st.totalHp - st.remainingHp;
+    const elapsed = Math.max(60_000, now - st.season.starts_at);
+    const avgHitsPerHour = (done / elapsed) * 3600_000;
+    const minute = Math.floor(now / 60_000);
+    let recent = 0;
+    for (const [k, v] of this.hitBuckets) if (k > minute - 60) recent += v;
+    const recentMinutes = Math.min(60, Math.max(1, Math.ceil(elapsed / 60_000)));
+    const recentHitsPerHour = (recent / recentMinutes) * 60;
+    const rate = recentHitsPerHour > 0 ? recentHitsPerHour : avgHitsPerHour;
+    const projectedCompletionAt = rate > 0 ? Math.round(now + (st.remainingHp / rate) * 3600_000) : null;
+    return {
+      totalHits: st.totalHp,
+      hitsDone: done,
+      remainingHits: st.remainingHp,
+      avgHitsPerHour: Math.round(avgHitsPerHour),
+      recentHitsPerHour: Math.round(recentHitsPerHour),
+      projectedCompletionAt,
+      endsAt: st.season.ends_at,
+      completesBeforeEnd: projectedCompletionAt !== null && projectedCompletionAt < st.season.ends_at,
     };
   }
 
@@ -624,11 +734,24 @@ export class GameEngine {
   }
 
   joinBrigade(playerId: string, rawCode: unknown): BrigadeInfo {
-    const code = normalizeInviteCode(rawCode);
     const p = this.player(playerId);
     if (p.brigadeId) throw new GameError('already_in_brigade', 'Quittez d\'abord votre brigade actuelle.');
+    const now = this.now();
+    if (this.joinFailures.isBlocked(playerId, now)) {
+      throw new GameError('too_many_attempts', 'Trop de codes invalides. Réessayez dans quelques minutes.');
+    }
+    let code: string;
+    try {
+      code = normalizeInviteCode(rawCode);
+    } catch (err) {
+      this.joinFailures.tryTake(playerId, now);
+      throw err;
+    }
     const b = this.store.getBrigadeByCode(code);
-    if (!b) throw new GameError('invalid_code', 'Code d\'invitation inconnu.');
+    if (!b) {
+      this.joinFailures.tryTake(playerId, now);
+      throw new GameError('invalid_code', 'Code d\'invitation inconnu.');
+    }
     this.store.transaction(() => {
       if (this.store.listMembers(b.id).length >= this.rules.brigadeMaxSize) {
         throw new GameError('brigade_full', `Brigade complète (${this.rules.brigadeMaxSize} membres maximum).`);

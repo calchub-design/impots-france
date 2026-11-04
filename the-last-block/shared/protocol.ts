@@ -55,6 +55,21 @@ export interface SeasonInfo {
   championName: string | null;
   championBrigadeName: string | null;
   finalStoneName: string | null;
+  /** Avance (ms) sur l'échéance si le cube a été terminé avant la date de fin. */
+  completedEarlyMs: number | null;
+}
+
+/** Avancement de la saison active et estimation de la fin du cube. */
+export interface SeasonProjection {
+  totalHits: number;
+  hitsDone: number;
+  remainingHits: number;
+  avgHitsPerHour: number;
+  /** Rythme sur la dernière heure (en mémoire : repart de zéro au redémarrage). */
+  recentHitsPerHour: number;
+  projectedCompletionAt: number | null;
+  endsAt: number;
+  completesBeforeEnd: boolean;
 }
 
 export interface CubeSnapshot {
@@ -114,6 +129,10 @@ export type ClientMessage =
   | { t: 'brigadeCreate'; name: string }
   | { t: 'brigadeJoin'; code: string }
   | { t: 'brigadeLeave' }
+  /** Nouveau jeton ; toutes les autres sessions du compte sont fermées. */
+  | { t: 'rotateToken' }
+  /** Révoque le jeton (compte invité abandonné) et ferme toutes les sessions. */
+  | { t: 'logout' }
   | { t: 'ping'; ts: number };
 
 // ---------------------------------------------------------------------------
@@ -137,6 +156,7 @@ export interface WelcomeMessage {
   brigade: BrigadeInfo | null;
   online: number;
   serverTime: number;
+  projection: SeasonProjection | null;
 }
 
 export interface MineResultMessage {
@@ -183,13 +203,26 @@ export type ServerMessage =
       brigades: BrigadeBoardEntry[];
       online: number;
       destroyedBlocks: number;
+      projection: SeasonProjection | null;
     }
+  | { t: 'token'; token: string }
   | { t: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null }
   | { t: 'seasonStarted' }
   | { t: 'profile'; player: PublicPlayer }
   | { t: 'brigade'; brigade: BrigadeInfo | null }
   | { t: 'error'; code: string; message: string }
   | { t: 'pong'; ts: number; serverTime: number };
+
+/** Codes de fermeture WebSocket applicatifs. */
+export const CLOSE_CODES = {
+  /** Trop de sessions simultanées : la plus ancienne est fermée. Pas de reconnexion automatique. */
+  replaced: 4001,
+  /** Jeton remplacé (rotation) : se reconnecter avec le jeton à jour. */
+  rotated: 4002,
+  /** Jeton invalide ou révoqué. */
+  invalidToken: 4003,
+  helloTimeout: 4000,
+} as const;
 
 export function encode(msg: ServerMessage | ClientMessage): string {
   return JSON.stringify(msg);

@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../shared/protocol.js';
+import { CLOSE_CODES, PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../shared/protocol.js';
 
 /** Identifiant d'action aléatoire (fonctionne aussi hors contexte sécurisé, ex. IP locale en HTTP). */
 export function newActionId(): string {
@@ -15,7 +15,8 @@ function storage(): Storage | null {
   }
 }
 
-export type ConnState = 'connecting' | 'online' | 'offline';
+/** `replaced` : session fermée car ouverte ailleurs (pas de reconnexion automatique). */
+export type ConnState = 'connecting' | 'online' | 'offline' | 'replaced';
 
 interface PendingAction {
   layer: number;
@@ -39,6 +40,7 @@ export class GameSocket {
     private readonly profile: string,
     private readonly onMessage: (msg: ServerMessage) => void,
     private readonly onState: (s: ConnState) => void,
+    private readonly onNotice: (text: string) => void,
     private readonly maxPerSecond = 5,
   ) {}
 
@@ -78,15 +80,34 @@ export class GameSocket {
         this.resendPending();
         return;
       }
+      if (msg.t === 'token') {
+        // Rotation demandée par ce client : on conserve le nouveau jeton.
+        storage()?.setItem(this.tokenKey, msg.token);
+        return this.onNotice('Nouveau jeton enregistré : vos autres sessions ont été déconnectées.');
+      }
+      if (msg.t === 'error' && msg.code === 'invalid_token') {
+        this.forgetToken();
+        this.pending.clear();
+        return this.onNotice('Session invalide ou révoquée : un nouveau compte invité va être créé.');
+      }
       if (msg.t === 'mineResult') this.pending.delete(msg.actionId);
       this.onMessage(msg);
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       if (this.ws !== ws) return;
       this.ws = null;
+      if (ev.code === CLOSE_CODES.replaced) {
+        // Trop de sessions : celle-ci a été remplacée. Ne pas se reconnecter
+        // automatiquement (sinon les onglets se chasseraient en boucle).
+        this.closedByUser = true;
+        this.onState('replaced');
+        return;
+      }
       this.onState('offline');
       if (this.closedByUser) return;
-      const delay = Math.min(10_000, 400 * 2 ** this.attempt) * (0.7 + Math.random() * 0.6);
+      // Refus de politique (ex. trop de comptes créés) : on espace fortement.
+      if (ev.code === 1008) this.attempt = Math.max(this.attempt, 6);
+      const delay = Math.min(30_000, 400 * 2 ** this.attempt) * (0.7 + Math.random() * 0.6);
       this.attempt++;
       setTimeout(() => this.connect(), delay);
     };

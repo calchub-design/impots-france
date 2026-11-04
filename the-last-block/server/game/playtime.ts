@@ -1,11 +1,22 @@
 /**
  * Calcul du temps de jeu ACTIF (limite quotidienne, 4 h par défaut).
  *
- * Règle : seul le temps écoulé entre deux coups acceptés consécutifs est
- * compté, et seulement si cet écart est inférieur ou égal à `idleGapMs`.
- * Un écart plus long est considéré comme de l'inactivité et n'est pas compté.
- * Le compteur est remis à zéro à minuit UTC ; un écart qui chevauche minuit
- * n'est crédité que pour sa partie postérieure à minuit.
+ * Modèle : chaque coup accepté au temps t rend le joueur actif sur la
+ * fenêtre [t, t + W] (W = `idleGapMs`, 5 s par défaut). Le temps actif est la
+ * durée de la RÉUNION de ces fenêtres. Concrètement, un coup crédite
+ * `min(t - dernierCoup, W)` (W pour le premier coup).
+ *
+ * Propriétés (testées dans tests/limits.test.ts) :
+ *  - jeu continu : le temps crédité suit le temps réel ;
+ *  - une pause de durée P ne compte que min(P, W) : l'inactivité n'est pas
+ *    comptée au-delà de W ;
+ *  - aucun coup n'est « gratuit » : espacer ses coups (ex. un toutes les 21 s)
+ *    coûte W par coup. Avec W ≥ 1 s et au plus N coups par seconde, le nombre
+ *    de coups par jour est borné par N × (limite en secondes) + N, quel que
+ *    soit le rythme adopté (≈ 72 000 coups pour 4 h à 5 coups/s).
+ *
+ * Le crédit est imputé au jour UTC du coup ; il est plafonné à la durée
+ * écoulée depuis minuit, de sorte qu'un nouveau jour démarre toujours à 0.
  */
 
 const DAY_MS = 24 * 3600_000;
@@ -22,11 +33,11 @@ export function nextDayStart(ms: number): number {
   return dayStart(ms) + DAY_MS;
 }
 
-/** Temps actif (ms) à créditer pour un coup au temps `now`. */
-export function activeCredit(lastActionAt: number | null, now: number, idleGapMs: number): number {
-  if (lastActionAt === null) return 0;
+/** Temps actif (ms) à créditer pour un coup accepté au temps `now`. */
+export function activeCredit(lastActionAt: number | null, now: number, windowMs: number): number {
+  const sinceMidnight = now - dayStart(now);
+  if (lastActionAt === null) return Math.min(windowMs, sinceMidnight);
   const gap = now - lastActionAt;
-  if (gap <= 0 || gap > idleGapMs) return 0;
-  const start = Math.max(lastActionAt, dayStart(now));
-  return now - start;
+  if (gap <= 0) return 0;
+  return Math.min(gap, windowMs, sinceMidnight);
 }

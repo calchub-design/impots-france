@@ -11,6 +11,15 @@ export class GameError extends Error {
   }
 }
 
+/**
+ * Clé d'unicité d'un nom : forme NFKC (neutralise pleine chasse, ligatures,
+ * exposants…), minuscules, espaces normalisés. Ne couvre PAS les homoglyphes
+ * entre alphabets (ex. « а » cyrillique vs « a » latin).
+ */
+export function nameKey(name: string): string {
+  return name.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 /** Nettoie et valide un pseudo de joueur (2 à 20 caractères). */
 export function cleanPlayerName(raw: unknown): string {
   if (typeof raw !== 'string') throw new GameError('invalid_name', 'Pseudo invalide.');
@@ -44,6 +53,7 @@ export function normalizeInviteCode(raw: unknown): string {
   return code;
 }
 
-export function guestName(): string {
-  return `Mineur-${randomInt(1000, 10000)}`;
+export function guestName(attempt = 0): string {
+  // Espace élargi après plusieurs collisions.
+  return attempt < 5 ? `Mineur-${randomInt(1000, 10000)}` : `Mineur-${randomInt(100000, 1000000)}`;
 }

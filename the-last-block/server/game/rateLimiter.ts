@@ -27,6 +27,15 @@ export class SlidingWindowLimiter {
     return 0;
   }
 
+  /** Vrai si la clé a atteint sa limite (sans consommer de jeton). */
+  isBlocked(key: string, now: number): boolean {
+    const times = this.log.get(key);
+    if (!times) return false;
+    const threshold = now - this.windowMs;
+    while (times.length > 0 && times[0] <= threshold) times.shift();
+    return times.length >= this.max;
+  }
+
   /** Libère la mémoire des clés inactives. */
   prune(now: number): void {
     const threshold = now - this.windowMs;

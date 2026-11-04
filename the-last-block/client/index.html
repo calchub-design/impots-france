@@ -125,7 +125,10 @@
             <p class="muted small" id="donation-note"></p>
             <h2>Profil local</h2>
             <p class="muted small">Pour tester plusieurs joueurs dans un même navigateur, ouvrez <code>?profil=bob</code>.</p>
-            <button type="button" class="danger" id="reset-profile">Oublier ce compte invité</button>
+            <h2>Sécurité du compte invité</h2>
+            <p class="muted small">Votre compte est lié à un jeton secret conservé dans ce navigateur. Si vous pensez qu'il a été copié, générez-en un nouveau : toutes vos autres sessions seront déconnectées.</p>
+            <button type="button" id="rotate-token" class="secondary">Déconnecter mes autres appareils</button>
+            <button type="button" class="danger" id="reset-profile">Abandonner ce compte invité</button>
           </div>
         </section>
       </main>

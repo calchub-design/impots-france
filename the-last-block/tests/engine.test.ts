@@ -148,65 +148,6 @@ describe('limite de débit : 5 actions par seconde et par compte', () => {
   });
 });
 
-describe('limite de temps actif quotidien', () => {
-  it('compte le temps entre coups rapprochés, ignore l\'inactivité', () => {
-    const { engine, clock } = makeEngine({ cubeSize: 4, baseHp: 100_000, idleGapMs: 20_000 });
-    engine.startSeason();
-    const p = newPlayer(engine);
-    engine.mine(p, { actionId: aid(), layer: 0, block: 0 }); // 1er coup : 0
-    clock.advance(1000);
-    engine.mine(p, { actionId: aid(), layer: 0, block: 0 }); // +1 s
-    clock.advance(5000);
-    engine.mine(p, { actionId: aid(), layer: 0, block: 0 }); // +5 s
-    expect(engine.playtime(p).usedMs).toBe(6000);
-    clock.advance(10 * 60_000); // 10 min d'inactivité
-    engine.mine(p, { actionId: aid(), layer: 0, block: 0 }); // non compté
-    expect(engine.playtime(p).usedMs).toBe(6000);
-    clock.advance(20_000);
-    engine.mine(p, { actionId: aid(), layer: 0, block: 0 }); // pile la limite d'inactivité : compté
-    expect(engine.playtime(p).usedMs).toBe(26_000);
-  });
-
-  it('bloque après 4 h actives et se réinitialise le lendemain (UTC)', () => {
-    const { engine, clock, store } = makeEngine({ cubeSize: 4, baseHp: 1_000_000, seasonDurationMs: 30 * 24 * 3600_000 });
-    engine.startSeason();
-    const p = newPlayer(engine);
-    clock.t = Date.UTC(2026, 0, 15, 8, 0, 0);
-    let accepted = 0;
-    let firstRefusal: string | undefined;
-    // Un coup toutes les 10 s pendant 5 h.
-    for (let i = 0; i < 1800; i++) {
-      const r = engine.mine(p, { actionId: aid(), layer: 0, block: 0 });
-      if (r.ok) accepted++;
-      else {
-        firstRefusal ??= r.reason;
-      }
-      clock.advance(10_000);
-    }
-    expect(firstRefusal).toBe('daily_limit');
-    expect(engine.playtime(p).usedMs).toBe(4 * 3600_000);
-    // 4 h / 10 s = 1440 intervalles crédités, +1 pour le premier coup (non crédité).
-    expect(accepted).toBe(1441);
-    // Persisté en base.
-    expect(store.getPlaytime(p, '2026-01-15')).toBe(4 * 3600_000);
-    // Le lendemain.
-    clock.t = Date.UTC(2026, 0, 16, 0, 0, 1);
-    expect(engine.mine(p, { actionId: aid(), layer: 0, block: 0 }).ok).toBe(true);
-    expect(engine.playtime(p).usedMs).toBe(0);
-  });
-
-  it('un écart qui chevauche minuit n\'est crédité que pour la partie du nouveau jour', () => {
-    const { engine, clock } = makeEngine({ cubeSize: 2, baseHp: 1000 });
-    engine.startSeason();
-    const p = newPlayer(engine);
-    clock.t = Date.UTC(2026, 0, 15, 23, 59, 55);
-    engine.mine(p, { actionId: aid(), layer: 0, block: 0 });
-    clock.t = Date.UTC(2026, 0, 16, 0, 0, 3);
-    engine.mine(p, { actionId: aid(), layer: 0, block: 0 });
-    expect(engine.playtime(p).usedMs).toBe(3000);
-  });
-});
-
 describe('concurrence', () => {
   it('beaucoup de joueurs sur le même bloc : un seul destructeur, PV jamais négatifs', () => {
     const { engine, clock, store } = makeEngine({ cubeSize: 2, baseHp: 37 });
@@ -272,9 +213,12 @@ describe('persistance et reprise', () => {
     }
   });
 
-  it('un jeton invalide crée un nouveau compte invité', () => {
+  it('un jeton inconnu ou mal formé ne reprend aucun compte', () => {
     const { engine } = makeEngine();
-    const r = engine.connectGuest('x'.repeat(43));
-    expect(r.token).toBeDefined();
+    engine.createGuest('Alice');
+    expect(engine.resumeGuest('x'.repeat(43))).toBeNull();
+    expect(engine.resumeGuest('court')).toBeNull();
+    expect(engine.resumeGuest({ id: 'x' })).toBeNull();
+    expect(engine.resumeGuest(undefined)).toBeNull();
   });
 });

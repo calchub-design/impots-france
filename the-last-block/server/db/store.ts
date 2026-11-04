@@ -83,10 +83,15 @@ export interface GameStore {
   close(): void;
 
   // Joueurs
-  createPlayer(p: { id: string; name: string; tokenHash: string | null; skin: string; authProvider: string; createdAt: number }): void;
+  createPlayer(p: { id: string; name: string; nameKey: string; tokenHash: string | null; skin: string; authProvider: string; createdAt: number }): void;
   getPlayer(id: string): PlayerRow | undefined;
+  countPlayers(): number;
   getPlayerByTokenHash(hash: string): PlayerRow | undefined;
-  setPlayerName(id: string, name: string): void;
+  /** Joueur portant ce pseudo normalisé (unicité anti-usurpation). */
+  getPlayerByNameKey(key: string): PlayerRow | undefined;
+  setPlayerName(id: string, name: string, nameKey: string): void;
+  /** Remplace (rotation) ou supprime (null = révocation) l'empreinte du jeton. */
+  setTokenHash(id: string, hash: string | null): void;
   setPlayerSkin(id: string, skin: string): void;
   setLastActionAt(id: string, at: number): void;
 
@@ -94,6 +99,7 @@ export interface GameStore {
   getActiveSeason(): SeasonRow | undefined;
   getSeason(id: number): SeasonRow | undefined;
   listSeasons(limit: number): SeasonRow[];
+  getLastEndedSeason(): SeasonRow | undefined;
   createSeason(s: { name: string; cubeSize: number; baseHp: number; hpPerLayer: number; startsAt: number; endsAt: number }): SeasonRow;
   endSeason(id: number, f: { endedAt: number; reason: 'completed' | 'timeout' | 'admin'; championPlayerId: string | null; championBrigadeId: string | null; finalStonePlayerId: string | null }): void;
 
@@ -106,6 +112,8 @@ export interface GameStore {
   findHit(playerId: string, actionId: string): HitRow | undefined;
   insertHit(h: Omit<HitRow, 'id'>): void;
   countHits(seasonId: number): number;
+  /** Dernier coup destructeur d'une saison (récupération de la Pierre finale après crash). */
+  lastDestroyingHit(seasonId: number): HitRow | undefined;
 
   // Contributions
   addContribution(seasonId: number, playerId: string, destroyed: boolean, at: number): void;

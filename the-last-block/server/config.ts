@@ -11,6 +11,10 @@ export interface GameRules {
   maxActionsPerSecond: number;
   rateWindowMs: number;
   dailyActiveLimitMs: number;
+  /**
+   * Fenêtre d'activité : chaque coup accepté rend le joueur « actif » pendant
+   * cette durée. Le temps actif est la réunion de ces fenêtres (voir playtime.ts).
+   */
   idleGapMs: number;
   brigadeMinSize: number;
   brigadeMaxSize: number;
@@ -26,6 +30,15 @@ export interface DonationSettings {
   note: string;
 }
 
+export interface SecuritySettings {
+  /** Lire l'IP client dans X-Forwarded-For (uniquement derrière un proxy de confiance). */
+  trustProxy: boolean;
+  maxConnectionsPerIp: number;
+  maxConnectionsPerAccount: number;
+  newAccountsPerIpPerHour: number;
+  sqliteSynchronous: 'NORMAL' | 'FULL';
+}
+
 export interface AppConfig {
   port: number;
   host: string;
@@ -34,6 +47,7 @@ export interface AppConfig {
   allowedOrigins: string[];
   staticDir: string;
   rules: GameRules;
+  security: SecuritySettings;
   donation: DonationSettings;
   auth: { googleClientId: string; appleClientId: string };
 }
@@ -69,7 +83,7 @@ export const DEFAULT_RULES: GameRules = {
   maxActionsPerSecond: 5,
   rateWindowMs: 1000,
   dailyActiveLimitMs: 4 * 3600_000,
-  idleGapMs: 20_000,
+  idleGapMs: 5_000,
   brigadeMinSize: 5,
   brigadeMaxSize: 10,
   autoStartSeason: true,
@@ -90,18 +104,25 @@ export function loadConfig(env: Env = process.env): AppConfig {
     staticDir: str(env, 'STATIC_DIR', './dist/client'),
     rules: {
       cubeSize: int(env, 'CUBE_SIZE', DEFAULT_RULES.cubeSize, 1, 64),
-      baseHp: int(env, 'BLOCK_BASE_HP', DEFAULT_RULES.baseHp, 1, 1000),
-      hpPerLayer: int(env, 'BLOCK_HP_PER_LAYER', DEFAULT_RULES.hpPerLayer, 0, 1000),
+      baseHp: int(env, 'BLOCK_BASE_HP', DEFAULT_RULES.baseHp, 1, 1_000_000),
+      hpPerLayer: int(env, 'BLOCK_HP_PER_LAYER', DEFAULT_RULES.hpPerLayer, 0, 1_000_000),
       seasonDurationMs: int(env, 'SEASON_DURATION_HOURS', 168, 1, 24 * 366) * 3600_000,
       maxActionsPerSecond: int(env, 'MAX_ACTIONS_PER_SECOND', 5, 1, 100),
       rateWindowMs: 1000,
       dailyActiveLimitMs: int(env, 'DAILY_ACTIVE_LIMIT_MINUTES', 240, 1, 1440) * 60_000,
-      idleGapMs: int(env, 'IDLE_GAP_SECONDS', 20, 1, 3600) * 1000,
+      idleGapMs: int(env, 'IDLE_GAP_SECONDS', 5, 1, 3600) * 1000,
       brigadeMinSize: int(env, 'BRIGADE_MIN_SIZE', 5, 1, 100),
       brigadeMaxSize: int(env, 'BRIGADE_MAX_SIZE', 10, 1, 100),
       autoStartSeason: bool(env, 'AUTO_START_SEASON', true),
       seasonCooldownMs: int(env, 'SEASON_COOLDOWN_SECONDS', 60, 0, 30 * 24 * 3600) * 1000,
       leaderboardSize: int(env, 'LEADERBOARD_SIZE', 10, 1, 100),
+    },
+    security: {
+      trustProxy: bool(env, 'TRUST_PROXY', false),
+      maxConnectionsPerIp: int(env, 'MAX_CONNECTIONS_PER_IP', 20, 1, 100_000),
+      maxConnectionsPerAccount: int(env, 'MAX_CONNECTIONS_PER_ACCOUNT', 4, 1, 100),
+      newAccountsPerIpPerHour: int(env, 'NEW_ACCOUNTS_PER_IP_PER_HOUR', 30, 1, 1_000_000),
+      sqliteSynchronous: str(env, 'SQLITE_SYNCHRONOUS', 'NORMAL').toUpperCase() === 'FULL' ? 'FULL' : 'NORMAL',
     },
     donation: {
       enabled: bool(env, 'DONATION_DISPLAY_ENABLED', false),
