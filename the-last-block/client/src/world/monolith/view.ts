@@ -94,6 +94,7 @@ const FOG_BUCKETS = 6;
 /** Panneau : largeur relative à l'arête du cube, rapport hauteur/largeur, altitude. */
 /** Écran holographique : largeur relative à l'arête du cube, rapport hauteur/largeur, altitude, position (au-delà du bord nord). */
 const BOARD = { width: 1.1, aspect: 0.5, lift: 0.1, y: -2 };
+const TEXTURE_STEPS = [384, 640, 896, 1200];
 
 export class MonolithView implements WorldView {
   readonly kind = 'monolith' as const;
@@ -130,8 +131,9 @@ export class MonolithView implements WorldView {
   private readonly stars: { x: number; y: number; s: number; a: number; p: number }[] = [];
   private readonly boardCanvas: HTMLCanvasElement = document.createElement('canvas');
   /** Ciel mis en cache : redessiné seulement si la taille ou l'orientation changent sensiblement. */
-  private readonly skyCanvas: HTMLCanvasElement = document.createElement('canvas');
-  private skyKey = '';
+  /** Fond du ciel (dégradé + nébuleuses), périodique en largeur : peint une fois par taille, puis décalé. */
+  private readonly nebulaCanvas: HTMLCanvasElement = document.createElement('canvas');
+  private nebulaKey = '';
   private boardKey = '';
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -414,58 +416,29 @@ export class MonolithView implements WorldView {
     }
   }
 
-  /** Copie du ciel en cache (une seule image par trame au lieu de plusieurs dégradés plein écran). */
+  /**
+   * Ciel cosmique : dégradé nuit, nébuleuses, étoiles et lueur d'horizon.
+   * Le fond (dégradé, nébuleuses, étoiles) est peint une seule fois par taille dans un
+   * motif qui se répète en largeur ; chaque image se contente de le décaler avec la
+   * rotation de la caméra (deux copies), puis ajoute la lueur d'horizon.
+   */
   private drawSkyCached(p: Pose) {
+    const nc = this.nebulaCanvas;
+    const nkey = `${this.canvas.width}|${this.canvas.height}`;
+    if (nkey !== this.nebulaKey) {
+      this.nebulaKey = nkey;
+      nc.width = this.canvas.width;
+      nc.height = this.canvas.height;
+      this.paintSky(nc.getContext('2d', { alpha: false })!);
+    }
+    const ctx = this.ctx;
     const yaw = Math.atan2(p.r[1], p.r[0]);
-    const pitch = Math.asin(-p.f[2]);
-    const key = `${this.canvas.width}|${this.canvas.height}|${Math.round(yaw * 90)}|${Math.round(pitch * 90)}`;
-    const sc = this.skyCanvas;
-    if (key !== this.skyKey) {
-      this.skyKey = key;
-      sc.width = this.canvas.width;
-      sc.height = this.canvas.height;
-      const sctx = sc.getContext('2d', { alpha: false })!;
-      sctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-      this.drawSky(sctx, p);
-    }
-    this.ctx.save();
-    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
-    this.ctx.drawImage(sc, 0, 0);
-    this.ctx.restore();
-  }
-
-  /** Ciel cosmique : dégradé nuit, nébuleuses discrètes, étoiles avec parallaxe, lueur d'horizon. */
-  private drawSky(ctx: CanvasRenderingContext2D, p: Pose) {
-    const g = ctx.createLinearGradient(0, 0, 0, this.h);
-    g.addColorStop(0, PALETTE.void);
-    g.addColorStop(0.55, PALETTE.night);
-    g.addColorStop(1, PALETTE.deep);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, this.w, this.h);
-    const yaw = Math.atan2(p.r[1], p.r[0]);
-    const nebulae: [number, number, number, string][] = [
-      [0.2, 0.18, 0.55, 'rgba(110,60,190,0.16)'],
-      [0.85, 0.35, 0.45, 'rgba(40,150,200,0.09)'],
-      [0.55, 0.85, 0.6, 'rgba(90,40,150,0.12)'],
-    ];
-    for (const [nx, ny, nr, col] of nebulae) {
-      const x = ((nx - yaw * 0.25) % 1 + 1) % 1 * this.w;
-      const y = ny * this.h;
-      const r = nr * Math.max(this.w, this.h);
-      const ng = ctx.createRadialGradient(x, y, 0, x, y, r);
-      ng.addColorStop(0, col);
-      ng.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = ng;
-      ctx.fillRect(0, 0, this.w, this.h);
-    }
-    for (const s of this.stars) {
-      const x = ((s.x - yaw * 0.35) % 1 + 1) % 1 * this.w;
-      const y = s.y * this.h;
-      ctx.globalAlpha = s.a * (0.75 + 0.25 * Math.sin(s.p));
-      ctx.fillStyle = s.p > 5.6 ? PALETTE.cyanSoft : '#e8e6ff';
-      ctx.fillRect(x, y, s.s, s.s);
-    }
-    ctx.globalAlpha = 1;
+    const off = Math.round(((((-yaw * 0.3) % 1) + 1) % 1) * nc.width);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(nc, off - nc.width, 0);
+    ctx.drawImage(nc, off, 0);
+    ctx.restore();
     // Lueur d'horizon (visible quand la caméra s'abaisse vers la vue monumentale).
     const pitch = Math.asin(-p.f[2]);
     const hy = p.cy - p.focal * Math.tan(pitch);
@@ -477,6 +450,40 @@ export class MonolithView implements WorldView {
       ctx.fillStyle = hg;
       ctx.fillRect(0, hy - this.h * 0.25, this.w, this.h * 0.35);
     }
+  }
+
+  /** Motif du ciel, périodique en largeur (les nébuleuses sont reproduites de part et d'autre). */
+  private paintSky(n: CanvasRenderingContext2D) {
+    n.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const g = n.createLinearGradient(0, 0, 0, this.h);
+    g.addColorStop(0, PALETTE.void);
+    g.addColorStop(0.55, PALETTE.night);
+    g.addColorStop(1, PALETTE.deep);
+    n.fillStyle = g;
+    n.fillRect(0, 0, this.w, this.h);
+    const nebulae: [number, number, number, string][] = [
+      [0.2, 0.18, 0.55, 'rgba(110,60,190,0.16)'],
+      [0.85, 0.35, 0.45, 'rgba(40,150,200,0.09)'],
+      [0.55, 0.85, 0.6, 'rgba(90,40,150,0.12)'],
+    ];
+    for (const [nx, ny, nr, col] of nebulae) {
+      const y = ny * this.h;
+      const r = nr * Math.max(this.w, this.h);
+      for (const dx of [-this.w, 0, this.w]) {
+        const x = nx * this.w + dx;
+        const ng = n.createRadialGradient(x, y, 0, x, y, r);
+        ng.addColorStop(0, col);
+        ng.addColorStop(1, 'rgba(0,0,0,0)');
+        n.fillStyle = ng;
+        n.fillRect(0, 0, this.w, this.h);
+      }
+    }
+    for (const s of this.stars) {
+      n.globalAlpha = s.a * (0.75 + 0.25 * Math.sin(s.p));
+      n.fillStyle = s.p > 5.6 ? PALETTE.cyanSoft : '#e8e6ff';
+      n.fillRect(s.x * this.w, s.y * this.h, s.s, s.s);
+    }
+    n.globalAlpha = 1;
   }
 
   /** Halo violet sous le monolithe : il paraît suspendu, chargé d'énergie. */
@@ -972,7 +979,8 @@ export class MonolithView implements WorldView {
     const wpx = Math.hypot(TR[0] - TL[0], TR[1] - TL[1]);
     if (wpx < 40) return;
     const onScreen = Math.max(TL[1], TR[1]) > 0 && Math.min(TL[1], BL[1]) < this.h && Math.max(TL[0], TR[0]) > 0 && Math.min(TL[0], TR[0]) < this.w;
-    if (onScreen) this.billboardScreenWidth = wpx;
+    if (!onScreen) return;
+    this.billboardScreenWidth = wpx;
     // Présence pleine en vue monumentale, discrète en vue de minage.
     const t = this.camera.t;
     const alpha = 0.28 + 0.72 * Math.min(1, t * 1.6);
@@ -1005,8 +1013,10 @@ export class MonolithView implements WorldView {
       ctx.fillRect(base[0] - er * 4, base[1] - er * 4, er * 8, er * 8);
     }
     ctx.restore();
-    // Texture (résolution adaptée à la taille à l'écran ; repeinte 4 fois/s au plus).
-    const cw = Math.max(360, Math.min(1200, Math.round(wpx * this.dpr)));
+    // Texture : résolution par paliers (pas de repeinte à chaque variation de taille pendant
+    // un glisser), repeinte 4 fois/s au plus pour le scintillement et le compte à rebours.
+    const need = wpx * this.dpr;
+    const cw = TEXTURE_STEPS.find((w) => w >= need) ?? TEXTURE_STEPS[TEXTURE_STEPS.length - 1];
     const ch = Math.round(cw * BOARD.aspect);
     const bc = this.boardCanvas;
     if (bc.width !== cw || bc.height !== ch) {
