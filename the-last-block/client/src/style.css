@@ -840,6 +840,25 @@ body {
   }
 }
 
+/* Téléphone en paysage : barre d'action compacte pour laisser la place à la surface. */
+@media (max-height: 500px) {
+  .actionbar {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .actionbar .playtime {
+    flex: 0 0 34%;
+  }
+  .actionbar .mine-btn {
+    flex: 1;
+    min-height: 46px;
+  }
+  .actionbar .mine-btn small {
+    display: none;
+  }
+}
+
 /* Écrans très bas (téléphone en paysage) : commandes en ligne, indicateurs masqués. */
 @media (max-height: 600px) {
   .cam-controls {

@@ -89,6 +89,8 @@ export class SurfaceView {
   private texts: FloatText[] = [];
   private shakeUntil = 0;
   private frameTimes: number[] = [];
+  /** Intervalles entre images consécutives pendant une animation (fluidité réellement obtenue). */
+  private frameIntervals: number[] = [];
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
@@ -163,6 +165,11 @@ export class SurfaceView {
     if (!this.raf) this.raf = requestAnimationFrame(this.frame);
   }
 
+  /** Intervalles des dernières images animées (ms). */
+  get recentFrameIntervals(): number[] {
+    return [...this.frameIntervals];
+  }
+
   /** Durées des dernières images (ms), pour la mesure de performance. */
   get recentFrameTimes(): number[] {
     return [...this.frameTimes];
@@ -213,6 +220,10 @@ export class SurfaceView {
 
   private frame = (t: number) => {
     this.raf = 0;
+    if (this.last) {
+      this.frameIntervals.push(t - this.last);
+      if (this.frameIntervals.length > 120) this.frameIntervals.shift();
+    }
     const dt = this.last ? Math.min(64, t - this.last) : 16;
     this.last = t;
     let keep = false;

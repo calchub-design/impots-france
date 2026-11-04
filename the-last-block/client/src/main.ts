@@ -742,14 +742,17 @@ function placeToasts() {
 new ResizeObserver(placeToasts).observe($('#viewport'));
 window.addEventListener('resize', placeToasts);
 
-// Effets réduits automatiques : si le dessin d'une image dépasse ~14 ms en moyenne
-// (appareil modeste), on bascule une fois, sauf choix explicite de l'utilisateur.
+// Effets réduits automatiques : si le dessin d'une image dépasse ~14 ms en moyenne,
+// ou si moins de ~25 images/s sont réellement affichées pendant les animations
+// (coût d'affichage d'un grand canevas haute densité), on bascule une fois, sauf
+// choix explicite de l'utilisateur.
 setInterval(() => {
   if (world.lowFx || storageGet('tlb.lowfx') !== null) return;
   const t = world.recentFrameTimes;
-  if (t.length < 60) return;
-  const avg = t.reduce((a, b) => a + b, 0) / t.length;
-  if (avg > 14) {
+  const iv = world.recentFrameIntervals.filter((x) => x < 250).sort((a, b) => a - b);
+  const avg = t.length ? t.reduce((a, b) => a + b, 0) / t.length : 0;
+  const medianInterval = iv.length >= 60 ? iv[Math.floor(iv.length / 2)] : 0;
+  if ((t.length >= 60 && avg > 14) || medianInterval > 40) {
     world.lowFx = true;
     lowFxBox.checked = true;
     world.resize();
