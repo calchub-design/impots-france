@@ -32,6 +32,8 @@ export interface ViewCamera {
   setBounds(b: ViewBounds): void;
   fitZoom(w: number, h: number): number;
   worldToScreen(wx: number, wy: number): [number, number];
+  /** Pixels par bloc au point (wx, wy) de la surface (la perspective réduit les lointains). */
+  scaleAt?(wx: number, wy: number): number;
   screenToWorld(sx: number, sy: number): [number, number];
   visibleWorld(): { minX: number; minY: number; maxX: number; maxY: number };
   panByScreen(dx: number, dy: number): void;

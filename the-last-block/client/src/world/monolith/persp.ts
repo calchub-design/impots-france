@@ -142,6 +142,11 @@ export class PerspectiveCamera implements ViewCamera {
     return s ? [s[0], s[1]] : [-1e5, -1e5];
   }
 
+  scaleAt(wx: number, wy: number): number {
+    const s = this.project(wx, wy, this.surfaceZ);
+    return s ? this.pose.focal / s[2] : 0;
+  }
+
   /** Point de la surface sous le pixel ; au-dessus de l'horizon, point lointain dans la même direction. */
   screenToWorld(sx: number, sy: number): [number, number] {
     const hit = this.unproject(sx, sy);

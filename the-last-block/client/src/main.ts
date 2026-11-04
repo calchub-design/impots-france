@@ -291,9 +291,21 @@ function updateBannerVisibility() {
     : world.camera.visibleWorld().minY < -2;
   const visible = !(billboard.data && boardShown);
   const banner = $('#banner');
+  reservePresenceZones();
   if (banner.hidden === !visible) return;
   banner.hidden = !visible;
   placeToasts();
+}
+/** Les pseudos des mineurs évitent les éléments d'interface posés sur la surface. */
+function reservePresenceZones() {
+  const v = $('#viewport').getBoundingClientRect();
+  presence.reserved = ['#banner', '.map-box', '.cam-controls', '.chips']
+    .map((sel) => document.querySelector<HTMLElement>(sel))
+    .filter((e): e is HTMLElement => !!e && !e.hidden && e.offsetParent !== null && getComputedStyle(e).opacity !== '0')
+    .map((e, i) => {
+      const r = e.getBoundingClientRect();
+      return { id: -1 - i, x: r.left - v.left, y: r.top - v.top, w: r.width, h: r.height };
+    });
 }
 $('#banner').addEventListener('click', lookAtBillboard);
 $('#board-btn').addEventListener('click', lookAtBillboard);

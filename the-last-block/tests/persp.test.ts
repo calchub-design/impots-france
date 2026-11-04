@@ -121,3 +121,13 @@ describe('caméra en perspective (rendu monolithe)', () => {
     expect(c.y).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe('échelle locale (balises de présence)', () => {
+  it('vaut le zoom au point visé et diminue avec la distance', () => {
+    const c = cam(48);
+    c.animateTo({ x: 24, y: 30, zoom: 32 }, 0);
+    c.update(16);
+    expect(c.scaleAt(24, 30)).toBeCloseTo(32, 0);
+    expect(c.scaleAt(24, 10)).toBeLessThan(c.scaleAt(24, 30) * 0.8);
+  });
+});
