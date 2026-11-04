@@ -9,6 +9,7 @@ import type {
   PlaytimeInfo,
   PublicPlayer,
   SeasonInfo,
+  SeasonProjection,
   ServerMessage,
 } from '../../shared/protocol.js';
 import { SKINS, skinById } from '../../shared/skins.js';
@@ -33,6 +34,8 @@ interface State {
   online: number;
   clockOffset: number;
   selected: number | null;
+  projection: SeasonProjection | null;
+  lastEnded: SeasonInfo | null;
 }
 
 const state: State = {
@@ -49,6 +52,8 @@ const state: State = {
   online: 0,
   clockOffset: 0,
   selected: null,
+  projection: null,
+  lastEnded: null,
 };
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -121,7 +126,9 @@ function onMessage(msg: ServerMessage) {
       state.brigade = msg.brigade;
       state.online = msg.online;
       state.clockOffset = msg.serverTime - Date.now();
+      state.projection = msg.projection;
       if (state.selected !== null && !(msg.cube && msg.cube.currentHp[state.selected] > 0)) state.selected = null;
+      if (!msg.season) loadSeasons(); // intersaison : récupère la saison écoulée pour le panneau
       renderAll();
       break;
     case 'delta':
@@ -145,6 +152,7 @@ function onMessage(msg: ServerMessage) {
         if (msg.layer !== undefined && msg.block !== undefined && msg.hpAfter !== undefined) {
           setHp(msg.layer, msg.block, msg.hpAfter);
           if (!msg.duplicate) scene.hitEffect(msg.block, !!msg.destroyed, myColor(), msg.destroyed ? '+1 bloc !' : '+1');
+          if (msg.destroyed && !msg.duplicate) haptic(12);
         }
         if (msg.me) state.me = msg.me;
         if (msg.playtime) state.playtime = msg.playtime;
@@ -158,12 +166,15 @@ function onMessage(msg: ServerMessage) {
       state.leaderboard = msg.leaderboard;
       state.brigades = msg.brigades;
       state.online = msg.online;
+      state.projection = msg.projection;
       if (state.cube) state.cube.destroyedBlocks = msg.destroyedBlocks;
       renderBoards();
+      renderProjection();
       renderHud();
       break;
     case 'seasonEnded':
       state.nextSeasonAt = msg.nextSeasonAt;
+      state.lastEnded = msg.season;
       showSeasonEnd(msg.season);
       loadSeasons();
       break;
@@ -259,6 +270,8 @@ function stopHold() {
 mineBtn.addEventListener('pointerdown', startHold);
 for (const ev of ['pointerup', 'pointerleave', 'pointercancel', 'blur'] as const) mineBtn.addEventListener(ev, stopHold);
 window.addEventListener('blur', stopHold);
+document.addEventListener('visibilitychange', () => document.hidden && stopHold());
+for (const n of [mineBtn, $('#scene')]) n.addEventListener('contextmenu', (e) => e.preventDefault());
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && !(e.target instanceof HTMLInputElement) && !e.repeat) {
     e.preventDefault();
@@ -301,6 +314,7 @@ function renderHud() {
     const used = Math.min(pt.usedMs, pt.limitMs);
     $('#playtime-text').textContent = `${Math.floor(used / 60000)} min / ${Math.round(pt.limitMs / 3600000)} h`;
     $('#playtime-fill').style.width = `${(used / pt.limitMs) * 100}%`;
+    $('#playtime-bar').setAttribute('aria-valuenow', String(Math.round((used / pt.limitMs) * 100)));
     $('#playtime-fill').classList.toggle('full', used >= pt.limitMs);
   }
   const limited = !!pt && pt.usedMs >= pt.limitMs;
@@ -314,9 +328,12 @@ function renderHud() {
     cube: state.cube,
     leaderboard: state.leaderboard,
     myId: state.player?.id ?? null,
+    me: state.player ? { name: state.player.name, skin: state.player.skin, rank: state.me.rank, hits: state.me.hits } : null,
     seasonName: state.season?.name ?? '',
+    countdown: countdownText(),
     selected: state.selected,
     message: !state.season ? 'Intersaison — le prochain cube arrive bientôt' : null,
+    lastSeason: state.lastEnded,
   };
 }
 
@@ -410,13 +427,24 @@ async function loadSeasons() {
   try {
     const r = await fetch('/api/seasons');
     const data = (await r.json()) as { seasons: SeasonInfo[] };
+    const ended = data.seasons.find((s) => s.status === 'ended');
+    if (ended && (!state.lastEnded || ended.id >= state.lastEnded.id)) {
+      state.lastEnded = ended;
+      renderHud();
+    }
     $('#season-list').replaceChildren(
       ...data.seasons.map((s) => {
         const li = el(
           'li',
           {},
           el('strong', { textContent: s.name }),
-          el('span', { cls: 'muted small', textContent: s.status === 'active' ? ' — en cours' : ` — terminée (${endReasonText(s.endReason)})` }),
+          el('span', {
+            cls: 'muted small',
+            textContent:
+              s.status === 'active'
+                ? ' — en cours'
+                : ` — terminée (${endReasonText(s.endReason)}${s.completedEarlyMs && s.completedEarlyMs > 60_000 ? `, ${fmtDuration(s.completedEarlyMs)} avant l'échéance` : ''})`,
+          }),
         );
         if (s.status === 'ended') {
           li.append(
@@ -455,7 +483,14 @@ function showSeasonEnd(s: SeasonInfo) {
   const dlg = $<HTMLDialogElement>('#season-dialog');
   $('#season-dialog-body').replaceChildren(
     el('h2', { textContent: `${s.name} terminée !` }),
-    el('p', { textContent: s.endReason === 'completed' ? 'Le cube a été entièrement miné.' : 'Le temps de la saison est écoulé.' }),
+    el('p', {
+      textContent:
+        s.endReason === 'completed'
+          ? `Le cube a été entièrement miné${s.completedEarlyMs && s.completedEarlyMs > 60_000 ? `, ${fmtDuration(s.completedEarlyMs)} avant l'échéance` : ''} !`
+          : s.endReason === 'admin'
+            ? 'La saison a été clôturée par l\'organisation.'
+            : 'Le temps de la saison est écoulé : le cube n\'a pas été terminé, la Pierre finale n\'est pas attribuée.',
+    }),
     el('p', {}, el('strong', { textContent: 'Champion : ' }), s.championName ?? '—'),
     el('p', {}, el('strong', { textContent: 'Brigade championne : ' }), s.championBrigadeName ?? '—'),
     el('p', {}, el('strong', { textContent: 'Pierre finale : ' }), s.finalStoneName ?? '—'),
@@ -471,7 +506,10 @@ document.querySelectorAll<HTMLButtonElement>('.tabs button').forEach((btn) =>
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b === btn));
     document.querySelectorAll<HTMLElement>('.tab-body').forEach((b) => b.classList.toggle('hidden', b.dataset.body !== btn.dataset.tab));
-    if (btn.dataset.tab === 'seasons') loadSeasons();
+    if (btn.dataset.tab === 'seasons') {
+      loadSeasons();
+      renderProjection();
+    }
   }),
 );
 
@@ -528,13 +566,44 @@ function toast(text: string, kind: 'good' | 'bad' | 'info' = 'info') {
   setTimeout(() => t.remove(), 3200);
 }
 
-setInterval(() => {
+function countdownText(): string {
   const now = serverNow();
-  const cd = $('#countdown');
-  if (state.season) cd.textContent = `fin dans ${fmtDuration(state.season.endsAt - now)}`;
-  else if (state.nextSeasonAt) cd.textContent = `prochaine saison dans ${fmtDuration(state.nextSeasonAt - now)}`;
-  else cd.textContent = 'en attente';
+  if (state.season) return `fin dans ${fmtDuration(state.season.endsAt - now)}`;
+  if (state.nextSeasonAt) return `prochaine saison dans ${fmtDuration(state.nextSeasonAt - now)}`;
+  return 'en attente';
+}
+
+setInterval(() => {
+  const text = countdownText();
+  $('#countdown').textContent = text;
+  scene.data.countdown = text;
 }, 500);
+
+function haptic(ms: number) {
+  try {
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) navigator.vibrate?.(ms);
+  } catch {
+    /* non pris en charge */
+  }
+}
+
+function renderProjection() {
+  const p = state.projection;
+  const node = $('#projection-text');
+  if (!p || !state.season) {
+    node.textContent = 'Aucune saison en cours.';
+    return;
+  }
+  const now = serverNow();
+  const pct = ((p.hitsDone / p.totalHits) * 100).toFixed(1);
+  let text = `${pct} % des coups nécessaires portés (${p.hitsDone.toLocaleString('fr-FR')} / ${p.totalHits.toLocaleString('fr-FR')}). Échéance dans ${fmtDuration(p.endsAt - now)}.`;
+  if (p.projectedCompletionAt && p.hitsDone > 0) {
+    text += p.completesBeforeEnd
+      ? ` Au rythme moyen actuel, le cube serait terminé dans ~${fmtDuration(p.projectedCompletionAt - now)}, avant l'échéance.`
+      : ` Au rythme moyen actuel, le cube ne serait pas terminé avant l'échéance.`;
+  }
+  node.textContent = text;
+}
 
 fetch('/api/config')
   .then((r) => r.json())

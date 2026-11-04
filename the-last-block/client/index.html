@@ -31,22 +31,23 @@
 
           <div class="hud">
             <div class="hud-item"><span class="k">Couche</span><span class="v" id="hud-layer">—</span></div>
-            <div class="hud-item"><span class="k">Cube miné</span><span class="v" id="hud-progress">—</span></div>
-            <div class="hud-item"><span class="k">Mes coups</span><span class="v" id="hud-hits">0</span></div>
+            <div class="hud-item"><span class="k">Cube</span><span class="v" id="hud-progress">—</span></div>
+            <div class="hud-item"><span class="k">Coups</span><span class="v" id="hud-hits">0</span></div>
             <div class="hud-item"><span class="k">Rang</span><span class="v" id="hud-rank">—</span></div>
             <div class="hud-item"><span class="k">En ligne</span><span class="v" id="hud-online">—</span></div>
           </div>
 
-          <div class="playtime">
-            <div class="playtime-label"><span>Temps actif aujourd'hui</span><span id="playtime-text">0 min / 4 h</span></div>
-            <div class="bar"><div class="fill" id="playtime-fill"></div></div>
+          <div class="actionbar">
+            <div class="playtime">
+              <div class="playtime-label"><span>Temps actif aujourd'hui</span><span id="playtime-text">0 min / 4 h</span></div>
+              <div class="bar" role="progressbar" aria-label="Temps actif aujourd'hui" id="playtime-bar"><div class="fill" id="playtime-fill"></div></div>
+            </div>
+            <button id="mine-btn" class="mine-btn" type="button">
+              <span class="pick" aria-hidden="true">⛏</span>
+              <span>Miner</span>
+              <small id="mine-hint">Touchez un bloc ou maintenez ce bouton</small>
+            </button>
           </div>
-
-          <button id="mine-btn" class="mine-btn" type="button">
-            <span class="pick" aria-hidden="true">⛏</span>
-            <span>Miner</span>
-            <small id="mine-hint">Touchez un bloc ou maintenez ce bouton</small>
-          </button>
         </section>
 
         <section class="panel">
@@ -93,6 +94,8 @@
           </div>
 
           <div class="tab-body hidden" data-body="seasons">
+            <h2>Saison en cours</h2>
+            <p class="small" id="projection-text">—</p>
             <h2>Saisons</h2>
             <ul class="seasons" id="season-list"></ul>
             <div id="season-detail"></div>

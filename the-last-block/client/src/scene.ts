@@ -1,4 +1,4 @@
-import type { CubeSnapshot, LeaderboardEntry } from '../../shared/protocol.js';
+import type { CubeSnapshot, LeaderboardEntry, SeasonInfo } from '../../shared/protocol.js';
 import { skinById } from '../../shared/skins.js';
 
 /**
@@ -30,10 +30,18 @@ export interface SceneData {
   cube: CubeSnapshot | null;
   leaderboard: LeaderboardEntry[];
   myId: string | null;
+  /** Ma position, affichée sous le podium si je ne suis pas dans le top visible. */
+  me: { name: string; skin: string; rank: number | null; hits: number } | null;
   seasonName: string;
+  /** Texte du compte à rebours (calculé par l'interface, horloge serveur). */
+  countdown: string;
   selected: number | null;
   message: string | null;
+  /** Saison terminée affichée sur le panneau pendant l'intersaison. */
+  lastSeason?: SeasonInfo | null;
 }
+
+const REDUCED_MOTION = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // Palette de strates : du sable en surface à la roche profonde puis au cœur doré.
 const STRATA = ['#c9a36b', '#b48a5a', '#9c7a58', '#866b55', '#6f5d55', '#5c5260', '#4b4766', '#3f3d6e', '#383677', '#4a3a86'];
@@ -61,7 +69,11 @@ export class Scene {
   private shake = new Map<number, number>();
   private hover: number | null = null;
   private t0 = performance.now();
-  data: SceneData = { cube: null, leaderboard: [], myId: null, seasonName: '', selected: null, message: null };
+  data: SceneData = { cube: null, leaderboard: [], myId: null, me: null, seasonName: '', countdown: '', selected: null, message: null };
+  /** Suivi des rangs pour signaler les montées au classement. */
+  private lastBoard: LeaderboardEntry[] | null = null;
+  private prevRanks = new Map<string, number>();
+  private rankUpAt = new Map<string, number>();
 
   // Géométrie courante (calculée à chaque image)
   private ox = 0;
@@ -108,7 +120,8 @@ export class Scene {
 
   private layout() {
     const size = this.data.cube?.size ?? 10;
-    const boardH = Math.min(this.h * 0.34, 230);
+    // Sur mobile le panneau prend une part plus grande : 5 lignes lisibles.
+    const boardH = this.w > 480 ? Math.min(this.h * 0.36, 250) : Math.min(this.h * 0.44, 200);
     const availH = this.h - boardH - 24;
     const availW = this.w - 24;
     // Le cube complet occupe une boîte de largeur size*tw et de hauteur size*tw.
@@ -143,7 +156,21 @@ export class Scene {
         if (cube.currentHp[idx] > 0) return idx;
       }
     }
-    return null;
+    // Aimantation : sur un grand cube les blocs sont petits sur mobile ; on
+    // retient le bloc vivant le plus proche du doigt (rayon ≥ 22 px).
+    const radius = Math.max(22, this.tw * 0.9);
+    let best: number | null = null;
+    let bestD = radius * radius;
+    for (let idx = 0; idx < cube.currentHp.length; idx++) {
+      if (!(cube.currentHp[idx] > 0)) continue;
+      const [cx, cy] = this.pt((idx % size) + 0.5, Math.floor(idx / size) + 0.5, ztop);
+      const d = (cx - sx) ** 2 + (cy - sy) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = idx;
+      }
+    }
+    return best;
   }
 
   /** Centre écran du dessus d'un bloc de la couche courante. */
@@ -161,8 +188,8 @@ export class Scene {
   hitEffect(idx: number, destroyed: boolean, color: string, label?: string) {
     const c = this.blockCenter(idx);
     if (!c) return;
-    this.shake.set(idx, performance.now());
-    const n = destroyed ? 22 : 6;
+    if (!REDUCED_MOTION) this.shake.set(idx, performance.now());
+    const n = REDUCED_MOTION ? (destroyed ? 6 : 0) : destroyed ? 22 : 6;
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = (destroyed ? 2.5 : 1.4) * (0.4 + Math.random());
@@ -378,12 +405,39 @@ export class Scene {
     ctx.stroke();
   }
 
+  private trackRanks(now: number) {
+    const board = this.data.leaderboard;
+    if (board === this.lastBoard) return;
+    this.lastBoard = board;
+    for (const e of board) {
+      const prev = this.prevRanks.get(e.playerId);
+      if (prev !== undefined && e.rank < prev) this.rankUpAt.set(e.playerId, now);
+    }
+    this.prevRanks = new Map(board.map((e) => [e.playerId, e.rank]));
+  }
+
+  private fit(text: string, maxW: number): string {
+    const ctx = this.ctx;
+    if (ctx.measureText(text).width <= maxW) return text;
+    let t = text;
+    while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+    return t + '…';
+  }
+
+  /**
+   * Panneau géant : podium (or, argent, bronze), barre de contribution
+   * relative au premier, brigade, flèche de progression, ma position si je
+   * suis hors du top affiché, avancement du cube et alerte Pierre finale.
+   */
   private drawBillboard(boardH: number, time: number) {
     const ctx = this.ctx;
-    const bw = Math.min(this.w - 20, 560);
+    const now = performance.now();
+    this.trackRanks(now);
+    const wide = this.w > 480;
+    const bw = Math.min(this.w - 16, 640);
     const bx = (this.w - bw) / 2;
-    const by = 10;
-    const bh = boardH - 10;
+    const by = 8;
+    const bh = boardH - 8;
     const postW = Math.max(6, bw * 0.018);
     // Poteaux reliant le panneau au cube.
     ctx.fillStyle = '#2a2540';
@@ -393,63 +447,211 @@ export class Scene {
     ctx.fillStyle = '#2e2a4a';
     roundRect(ctx, bx, by, bw, bh, 10);
     ctx.fill();
-    ctx.fillStyle = '#121029';
+    const inner = ctx.createLinearGradient(0, by, 0, by + bh);
+    inner.addColorStop(0, '#16132f');
+    inner.addColorStop(1, '#0d0b22');
+    ctx.fillStyle = inner;
     roundRect(ctx, bx + 6, by + 6, bw - 12, bh - 12, 7);
     ctx.fill();
-    // Ampoules animées
+    // Ampoules
     const bulbs = Math.floor(bw / 22);
     for (let i = 0; i < bulbs; i++) {
-      const on = Math.sin(time * 4 - i * 0.6) > 0;
+      const on = REDUCED_MOTION ? i % 2 === 0 : Math.sin(time * 4 - i * 0.6) > 0;
       ctx.fillStyle = on ? '#ffd76a' : '#5b4a22';
       ctx.beginPath();
       ctx.arc(bx + 11 + (i * (bw - 22)) / (bulbs - 1), by + 3, 2.4, 0, Math.PI * 2);
       ctx.arc(bx + 11 + (i * (bw - 22)) / (bulbs - 1), by + bh - 3, 2.4, 0, Math.PI * 2);
       ctx.fill();
     }
-    // Titre
-    const titleSize = Math.max(11, Math.min(16, bw / 30));
-    ctx.fillStyle = '#ffe08a';
-    ctx.font = `700 ${titleSize}px system-ui, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText(`PANNEAU DES MINEURS${this.data.seasonName ? ' — ' + this.data.seasonName.toUpperCase() : ''}`, bx + bw / 2, by + 12);
 
-    const rowsArea = bh - titleSize - 30;
-    const maxRows = Math.max(3, Math.min(10, Math.floor(rowsArea / 15)));
-    const entries = this.data.leaderboard.slice(0, maxRows);
-    const twoCols = entries.length > 5 && bw > 380;
-    const perCol = twoCols ? Math.ceil(entries.length / 2) : entries.length;
-    const rowH = Math.min(22, rowsArea / Math.max(1, perCol));
-    const fontSize = Math.max(10, Math.min(15, rowH * 0.72));
-    ctx.font = `600 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    const pad = 16;
+    const left = bx + pad;
+    const right = bx + bw - pad;
+    // En-tête : titre + saison / compte à rebours.
+    const titleSize = wide ? 15 : 12.5;
     ctx.textBaseline = 'middle';
-    if (entries.length === 0) {
-      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = `800 ${titleSize}px system-ui, sans-serif`;
+    ctx.fillStyle = '#ffe08a';
+    let y = by + 20;
+    if (wide) {
+      ctx.textAlign = 'left';
+      ctx.fillText('★ PANNEAU DES MINEURS', left, y);
+      ctx.textAlign = 'right';
+      ctx.font = `600 12px system-ui, sans-serif`;
+      ctx.fillStyle = '#b9b4dc';
+      ctx.fillText(this.fit([this.data.seasonName, this.data.countdown].filter(Boolean).join(' · '), bw * 0.45), right, y);
+    } else {
+      // Mobile : la saison et le compte à rebours figurent déjà dans la barre du haut.
       ctx.textAlign = 'center';
-      ctx.fillText('Aucun coup pour l\'instant — soyez le premier !', bx + bw / 2, by + titleSize + 20 + rowsArea / 2);
+      ctx.fillText(this.fit(`★ MINEURS — ${this.data.seasonName.toUpperCase() || 'INTERSAISON'} ★`, bw - 2 * pad), bx + bw / 2, y);
+    }
+
+    // Pied : avancement du cube (+ bannière Pierre finale).
+    const cube = this.data.cube;
+    const footY = by + bh - 17;
+    if (cube) {
+      const frac = cube.destroyedBlocks / cube.totalBlocks;
+      const lastLayer = cube.currentLayer === cube.size - 1;
+      const finalStone = lastLayer && cube.layerRemaining[cube.currentLayer] === 1;
+      ctx.font = `700 10.5px system-ui, sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#ece9f5';
+      const label = lastLayer ? (finalStone ? '◆ PIERRE FINALE EN JEU' : 'DERNIÈRE COUCHE') : `Cube ${(frac * 100).toFixed(1)} %`;
+      if (lastLayer) {
+        const pulse = REDUCED_MOTION ? 1 : 0.6 + 0.4 * Math.sin(time * 6);
+        ctx.fillStyle = `rgba(255,${finalStone ? 120 : 210},${finalStone ? 90 : 120},${pulse})`;
+      }
+      ctx.fillText(label, left, footY);
+      const barX = left + ctx.measureText(label).width + 10;
+      const barW = right - barX;
+      ctx.fillStyle = '#26224a';
+      roundRect(ctx, barX, footY - 4, barW, 8, 4);
+      ctx.fill();
+      ctx.fillStyle = '#f2c14e';
+      roundRect(ctx, barX, footY - 4, Math.max(8, barW * frac), 8, 4);
+      ctx.fill();
+    }
+
+    // Lignes du classement.
+    const listTop = y + 13;
+    const listBottom = cube ? footY - 11 : by + bh - 12;
+    const entries = this.data.leaderboard;
+    const me = this.data.me;
+    const meVisible = entries.some((e) => e.playerId === this.data.myId);
+    const showMeLine = !!me && me.rank !== null && !meVisible && entries.length > 0;
+    const avail = listBottom - listTop - (showMeLine ? 20 : 0);
+    const twoCols = wide && entries.length > 5;
+    const rowH = Math.max(16, Math.min(24, avail / (twoCols ? 5 : Math.min(5, Math.max(entries.length, 1)))));
+    const fitRows = Math.max(1, Math.floor(avail / rowH));
+    // Deux colonnes équilibrées (5 + 5 au maximum).
+    const perCol = twoCols ? Math.min(fitRows, Math.ceil(Math.min(entries.length, fitRows * 2) / 2)) : fitRows;
+    const shown = entries.slice(0, twoCols ? perCol * 2 : perCol);
+    if (!cube && this.data.lastSeason) {
+      // Intersaison : le panneau honore les titres de la saison écoulée.
+      const s = this.data.lastSeason;
+      const lines: [string, string, string][] = [
+        ['🏆', 'Champion', s.championName ?? '—'],
+        ['⚑', 'Brigade championne', s.championBrigadeName ?? '—'],
+        ['◆', 'Pierre finale', s.finalStoneName ?? (s.endReason === 'completed' ? '—' : 'non attribuée')],
+      ];
+      const lh = Math.min(26, (listBottom - listTop) / 4);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffe08a';
+      ctx.font = `800 ${Math.min(14, lh * 0.6)}px system-ui, sans-serif`;
+      ctx.fillText(this.fit(`${s.name.toUpperCase()} TERMINÉE`, bw - 2 * pad), bx + bw / 2, listTop + lh / 2);
+      lines.forEach(([icon, label, value], i) => {
+        const cy = listTop + (i + 1.5) * lh;
+        ctx.font = `600 ${Math.min(13, lh * 0.55)}px system-ui, sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#b9b4dc';
+        ctx.fillText(`${icon} ${label}`, left, cy);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#f4f1ea';
+        ctx.font = `700 ${Math.min(14, lh * 0.6)}px system-ui, sans-serif`;
+        ctx.fillText(this.fit(value, (right - left) * 0.5), right, cy);
+      });
       return;
     }
-    const colW = twoCols ? (bw - 32) / 2 : bw - 32;
-    entries.forEach((e, i) => {
+    if (shown.length === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.textAlign = 'center';
+      ctx.font = `600 13px system-ui, sans-serif`;
+      ctx.fillText('Aucun coup pour l\'instant — soyez le premier !', bx + bw / 2, (listTop + listBottom) / 2);
+      return;
+    }
+    const top = shown[0].hits || 1;
+    const colGap = 14;
+    const colW = twoCols ? (right - left - colGap) / 2 : right - left;
+    shown.forEach((e, i) => {
       const col = twoCols && i >= perCol ? 1 : 0;
       const row = col ? i - perCol : i;
-      const x = bx + 16 + col * (colW + 0);
-      const y = by + titleSize + 22 + row * rowH + rowH / 2;
-      if (e.playerId === this.data.myId) {
-        ctx.fillStyle = 'rgba(255,224,138,0.12)';
-        ctx.fillRect(x - 4, y - rowH / 2 + 1, colW - 4, rowH - 2);
-      }
-      const medal = e.rank === 1 ? '#ffd24a' : e.rank === 2 ? '#d5dbe6' : e.rank === 3 ? '#d08a4a' : '#8c86b0';
-      ctx.fillStyle = medal;
-      ctx.textAlign = 'left';
-      ctx.fillText(`${e.rank}.`.padStart(3, ' '), x, y);
-      ctx.fillStyle = skinById(e.skin).color;
-      const name = e.name.length > 14 ? e.name.slice(0, 13) + '…' : e.name;
-      ctx.fillText(name, x + fontSize * 2.2, y);
-      ctx.fillStyle = '#f4f1ea';
-      ctx.textAlign = 'right';
-      ctx.fillText(e.hits.toLocaleString('fr-FR'), x + colW - 12, y);
+      const x = left + col * (colW + colGap);
+      const cy = listTop + row * rowH + rowH / 2;
+      this.drawRow(e.rank, e.name, e.skin, e.hits, e.brigadeName, x, cy, colW, rowH, e.hits / top, e.playerId === this.data.myId, this.rankUpAt.get(e.playerId), now);
     });
+    if (showMeLine && me) {
+      const cy = listTop + Math.min(perCol, shown.length) * rowH + 10;
+      ctx.fillStyle = '#8c86b0';
+      ctx.textAlign = 'center';
+      ctx.font = `700 10px system-ui, sans-serif`;
+      ctx.fillText('• • •', bx + bw / 2, cy - 6);
+      this.drawRow(me.rank!, me.name, me.skin, me.hits, null, left, cy + 8, twoCols ? colW : right - left, 18, me.hits / top, true, undefined, now);
+    }
+  }
+
+  private drawRow(
+    rank: number,
+    name: string,
+    skin: string,
+    hits: number,
+    brigade: string | null,
+    x: number,
+    cy: number,
+    w: number,
+    h: number,
+    share: number,
+    mine: boolean,
+    rankUpAt: number | undefined,
+    now: number,
+  ) {
+    const ctx = this.ctx;
+    const podium = rank <= 3;
+    const flash = rankUpAt !== undefined && now - rankUpAt < 3000;
+    // Barre de contribution relative au premier.
+    ctx.fillStyle = mine ? 'rgba(255,224,138,0.16)' : flash ? 'rgba(91,227,154,0.14)' : 'rgba(255,255,255,0.045)';
+    roundRect(ctx, x - 4, cy - h / 2 + 1.5, (w + 4) * Math.max(0.04, Math.min(1, share)), h - 3, 4);
+    ctx.fill();
+    if (mine) {
+      ctx.strokeStyle = 'rgba(255,224,138,0.55)';
+      ctx.lineWidth = 1;
+      roundRect(ctx, x - 4, cy - h / 2 + 1.5, w + 4, h - 3, 4);
+      ctx.stroke();
+    }
+    // Médaille / rang
+    const r = Math.min(h * 0.38, 9);
+    const medal = rank === 1 ? '#ffd24a' : rank === 2 ? '#d5dbe6' : rank === 3 ? '#d08a4a' : null;
+    ctx.textBaseline = 'middle';
+    if (medal) {
+      ctx.fillStyle = medal;
+      ctx.beginPath();
+      ctx.arc(x + r, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#1a1405';
+      ctx.font = `800 ${r * 1.2}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(String(rank), x + r, cy + 0.5);
+    } else {
+      ctx.fillStyle = '#8c86b0';
+      ctx.font = `700 ${Math.min(12, h * 0.55)}px ui-monospace, Menlo, monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText(String(rank), x + r, cy);
+    }
+    // Score (et flèche de montée)
+    const fs = Math.max(10.5, Math.min(podium ? 15 : 13.5, h * 0.62));
+    ctx.font = `700 ${fs}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#f4f1ea';
+    const score = hits.toLocaleString('fr-FR');
+    ctx.fillText(score, x + w - 4, cy);
+    const scoreW = ctx.measureText(score).width;
+    if (flash) {
+      ctx.fillStyle = '#5be39a';
+      ctx.fillText('▲', x + w - 10 - scoreW, cy);
+    }
+    // Nom + brigade
+    const nameX = x + r * 2 + 8;
+    const nameMax = x + w - scoreW - (flash ? 26 : 14) - nameX;
+    ctx.textAlign = 'left';
+    ctx.font = `${podium ? 700 : 600} ${fs}px system-ui, sans-serif`;
+    ctx.fillStyle = skinById(skin).color;
+    const shownName = this.fit(name, nameMax);
+    ctx.fillText(shownName, nameX, cy);
+    const used = ctx.measureText(shownName).width;
+    if (brigade && nameMax - used > 40) {
+      ctx.font = `600 ${Math.max(9, fs - 4)}px system-ui, sans-serif`;
+      ctx.fillStyle = '#8c86b0';
+      ctx.fillText(this.fit(`[${brigade}]`, nameMax - used - 6), nameX + used + 6, cy + 0.5);
+    }
   }
 
   private drawEffects() {

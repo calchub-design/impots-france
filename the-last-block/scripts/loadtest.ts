@@ -35,10 +35,13 @@ async function main() {
   let dir: string | null = null;
   if (!url) {
     dir = mkdtempSync(join(tmpdir(), 'tlb-load-'));
-    const config = loadConfig({ ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: join(dir, 'load.sqlite'), CUBE_SIZE: '32', BLOCK_BASE_HP: '40' });
+    const config = loadConfig({ ...process.env, PORT: '0', HOST: '127.0.0.1', DB_PATH: join(dir, 'load.sqlite'), CUBE_SIZE: '32', BLOCK_BASE_HP: '40',
+      // Tous les robots viennent de 127.0.0.1 : on lève les limites par IP pour ce test.
+      MAX_CONNECTIONS_PER_IP: '100000', NEW_ACCOUNTS_PER_IP_PER_HOUR: '1000000' });
     server = await startGameServer({ config });
     url = `ws://127.0.0.1:${server.port}/ws`;
   }
+  if (arg('url', '')) console.log('ℹ Serveur externe : pensez à relever MAX_CONNECTIONS_PER_IP et NEW_ACCOUNTS_PER_IP_PER_HOUR pour ce test.');
   console.log(`→ ${bots} robots, ${seconds} s, un coup toutes les ${intervalMs} ms par robot, cible ${url}`);
 
   const clients: TestClient[] = [];
