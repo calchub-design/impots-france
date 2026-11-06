@@ -14,6 +14,8 @@ import type {
   ServerMessage,
 } from '../../shared/protocol.js';
 import { PRESENCE_WINDOW_MS } from '../../shared/protocol.js';
+import { discoveryHint, HINT_LABELS, type DiscoveryLog } from '../../shared/discoveries.js';
+import { hintText, renderArchives, RevealOverlay, SeenFragments } from './discoveries.js';
 import { SKINS, skinById } from '../../shared/skins.js';
 import { GameSocket, type ConnState } from './net.js';
 import { Scene } from './scene.js';
@@ -48,6 +50,8 @@ interface State {
   selected: number | null;
   projection: SeasonProjection | null;
   lastEnded: SeasonInfo | null;
+  /** Archives du cube de la saison courante (ou dernière), telles qu'envoyées par le serveur. */
+  discoveries: DiscoveryLog | null;
 }
 
 const state: State = {
@@ -66,6 +70,7 @@ const state: State = {
   selected: null,
   projection: null,
   lastEnded: null,
+  discoveries: null,
 };
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -259,10 +264,96 @@ function updateBillboard() {
     brigade: best ? { name: best.name, hits: best.hits, eligible: best.eligible } : null,
     progress,
     finalStone: cube.currentLayer === cube.size - 1 && cube.layerRemaining[cube.currentLayer] === 1,
+    notice: signalNotice(),
   };
   const top3 = state.leaderboard.slice(0, 3);
   $('#banner-top').textContent = top3.length ? `★ ${top3.map((e, i) => `${i + 1}. ${e.name} ${e.hits}`).join(' · ')}` : '★ Aucun coup pour l\'instant';
   $('#banner-sub').textContent = `${best ? `⚑ ${best.name} · ` : ''}cube ${fmtPct(progress)} · ${state.season.name}`;
+}
+
+// ---------------------------------------------------------------------------
+// Le Signal : découvertes collectives
+// ---------------------------------------------------------------------------
+
+let lastRevealAt = 0;
+const SIGNAL_NOTICE_MS = 60_000;
+const seenFragments = new SeenFragments(storageGet, storageSet);
+const revealOverlay = new RevealOverlay($('#discovery'), () => reducedMotion, () => openPanel('archives'));
+/** Saison affichée dans les archives (null : celle de la partie en cours). */
+let archivesSeason: number | null = null;
+
+function currentHint() {
+  const cube = state.cube;
+  if (!cube || cube.currentLayer >= cube.size) return null;
+  return discoveryHint(state.discoveries, cube.currentLayer, cube.layerRemaining[cube.currentLayer], cube.size * cube.size);
+}
+
+/** Annonce du panneau : nouveau fragment (pendant une minute), sinon indice en cours. */
+function signalNotice(): string | null {
+  if (Date.now() - lastRevealAt < SIGNAL_NOTICE_MS) return 'Nouveau fragment découvert';
+  const h = currentHint();
+  return h ? HINT_LABELS[h.level] : null;
+}
+
+function receiveDiscoveries(log: DiscoveryLog | null, fromWelcome: boolean) {
+  state.discoveries = log;
+  if (log) {
+    if (fromWelcome) {
+      // Fragment révélé pendant l'absence de ce navigateur : annoncé une fois, sans rejouer tout l'historique.
+      const missed = seenFragments.unseen(log);
+      if (missed.length) {
+        lastRevealAt = Date.now();
+        revealOverlay.show(missed[missed.length - 1], missed.length > 1 ? `${missed.length} fragments découverts en votre absence` : 'Découvert en votre absence');
+      }
+    }
+    seenFragments.markAll(log);
+  }
+  if (archivesSeason === null || archivesSeason === log?.seasonId) renderArchivesView(log);
+}
+
+function renderArchivesView(log: DiscoveryLog | null) {
+  renderArchives($('#archives-list'), $('#archives-summary'), log);
+}
+
+async function openArchives() {
+  const sel = $<HTMLSelectElement>('#archives-season');
+  try {
+    const r = await fetch('/api/seasons');
+    const data = (await r.json()) as { seasons: SeasonInfo[] };
+    const current = state.discoveries?.seasonId ?? null;
+    sel.replaceChildren(
+      ...data.seasons.map((x) => {
+        const o = el('option', { value: String(x.id), textContent: `${x.name}${x.status === 'active' ? ' (en cours)' : ''}` });
+        o.selected = x.id === (archivesSeason ?? current);
+        return o;
+      }),
+    );
+  } catch {
+    /* hors ligne : on garde la liste actuelle */
+  }
+  if (archivesSeason === null || archivesSeason === state.discoveries?.seasonId) renderArchivesView(state.discoveries);
+}
+
+$<HTMLSelectElement>('#archives-season').addEventListener('change', async (e) => {
+  const id = Number((e.target as HTMLSelectElement).value);
+  archivesSeason = id === state.discoveries?.seasonId ? null : id;
+  if (archivesSeason === null) return renderArchivesView(state.discoveries);
+  try {
+    const r = await fetch(`/api/discoveries?season=${id}`);
+    if (r.ok) renderArchivesView(((await r.json()) as { discoveries: DiscoveryLog }).discoveries);
+  } catch {
+    toast('Archives indisponibles hors connexion.', 'bad');
+  }
+});
+
+function renderSignalHint() {
+  const chip = $('#chip-signal');
+  const h = currentHint();
+  chip.hidden = !h;
+  if (h) {
+    chip.textContent = hintText(h.level);
+    chip.classList.toggle('near', h.level === 'near');
+  }
 }
 
 function lookAtBillboard() {
@@ -595,6 +686,7 @@ function onMessage(msg: ServerMessage) {
       state.projection = msg.projection;
       setPresence(msg.presence);
       ($('#presence-visible') as HTMLInputElement).checked = msg.presenceVisible;
+      receiveDiscoveries(msg.discoveries ?? null, true);
       if (!msg.season) loadSeasons(); // intersaison : récupère la saison écoulée pour le panneau
       applyCube(face === null || face.size !== msg.cube?.size || lastSeasonId !== msg.season?.id);
       lastSeasonId = msg.season?.id ?? null;
@@ -615,8 +707,17 @@ function onMessage(msg: ServerMessage) {
       state.cube = msg.cube;
       pendingHits.clear();
       applyCube(false);
-      toast(`Couche ${msg.cube.currentLayer + 1} atteinte !`, 'good');
+      // Une découverte vient d'être annoncée pour cette couche : pas de seconde notification.
+      if (Date.now() - lastRevealAt > 3000) toast(`Couche ${msg.cube.currentLayer + 1} atteinte !`, 'good');
       renderHud();
+      break;
+    case 'discovery':
+      // Révélation validée par le serveur (couche entièrement détruite), reçue par tous.
+      if (state.season && msg.seasonId !== state.season.id) return;
+      lastRevealAt = Date.now();
+      receiveDiscoveries(msg.discoveries, false);
+      revealOverlay.show(msg.fragment);
+      haptic(30);
       break;
     case 'mineResult':
       {
@@ -953,6 +1054,7 @@ function renderHud() {
   $('#hud-hits').textContent = state.me.hits.toLocaleString('fr-FR');
   $('#hud-rank').textContent = state.me.rank ? `#${state.me.rank}` : '—';
   $('#hud-online').textContent = String(state.online);
+  renderSignalHint();
   const pt = state.playtime;
   if (pt) {
     const used = Math.min(pt.usedMs, pt.limitMs);
@@ -1145,6 +1247,7 @@ document.querySelectorAll<HTMLButtonElement>('.tabs button').forEach((btn) =>
       loadSeasons();
       renderProjection();
     }
+    if (btn.dataset.tab === 'archives') void openArchives();
   }),
 );
 

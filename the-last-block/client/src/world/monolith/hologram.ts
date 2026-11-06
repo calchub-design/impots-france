@@ -19,6 +19,8 @@ export interface HoloData {
   /** Fraction restante de la couche courante (0..1). */
   layerLeft: number;
   finalStone: boolean;
+  /** Annonce temporaire du Signal (nouveau fragment, indice). */
+  notice?: string | null;
 }
 
 const CYAN = '127,233,255';
@@ -28,6 +30,7 @@ const MEDALS = ['#ffd24a', '#dfe6f2', '#e0995a'];
 /** Alerte affichée sur l'écran (null si rien de notable). */
 export function holoAlert(d: HoloData): string | null {
   if (d.finalStone) return '◆ PIERRE FINALE EN JEU';
+  if (d.notice) return `◈ ${d.notice.toUpperCase()}`;
   if (d.layer === d.layers - 1) return '▲ DERNIÈRE COUCHE';
   if (d.layerLeft > 0 && d.layerLeft < 0.1) return `▲ COUCHE ${d.layer + 1} PRESQUE TERMINÉE`;
   return null;
@@ -191,24 +194,25 @@ export function paintHologram(ctx: CanvasRenderingContext2D, w: number, h: numbe
   ctx.fillText('CUBE EXCAVÉ', cx, cy + u * 5.5);
   ctx.fillText(`COUCHE ${Math.min(d.layer + 1, d.layers)} / ${d.layers}`, cx, cy + u * 11);
 
-  // Pied : brigade en tête + alerte
+  // Pied : brigade en tête, puis l'alerte éventuelle sur sa propre ligne (jamais tronquée).
+  const alert = holoAlert(d);
   ctx.fillStyle = `rgba(${CYAN},0.35)`;
-  ctx.fillRect(left, u * 80, right - left, u * 0.5);
+  ctx.fillRect(left, u * (alert ? 77 : 80), right - left, u * 0.5);
   ctx.textAlign = 'left';
-  ctx.font = `700 ${u * 6.8}px system-ui, sans-serif`;
+  ctx.font = `700 ${u * (alert ? 5.6 : 6.8)}px system-ui, sans-serif`;
   ctx.fillStyle = '#eaf9ff';
   const brig = d.brigade
     ? `⚑ EN TÊTE : ${d.brigade.name} — ${d.brigade.hits.toLocaleString('fr-FR')} coups · ${d.brigade.eligible ? 'provisoire' : 'en formation'}`
     : '⚑ AUCUNE BRIGADE EN TÊTE POUR L\'INSTANT';
-  const alert = holoAlert(d);
-  ctx.fillText(fit(ctx, brig, (right - left) * (alert ? 0.62 : 1)), left, u * 89);
+  ctx.fillText(fit(ctx, brig, right - left), left, u * (alert ? 84 : 89));
   if (alert) {
     const pulse = reducedMotion ? 1 : 0.6 + 0.4 * Math.sin(time / 220);
-    ctx.textAlign = 'right';
-    ctx.shadowColor = '#ffb35c';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = alert.startsWith('◈') ? '#41e0ff' : '#ffb35c';
     ctx.shadowBlur = u * 3;
-    ctx.fillStyle = `rgba(255,190,110,${pulse})`;
-    ctx.fillText(fit(ctx, alert, (right - left) * 0.36), right, u * 89);
+    ctx.fillStyle = alert.startsWith('◈') ? `rgba(160,240,255,${pulse})` : `rgba(255,190,110,${pulse})`;
+    ctx.font = `800 ${u * 5.8}px system-ui, sans-serif`;
+    ctx.fillText(fit(ctx, alert, right - left), (left + right) / 2, u * 92);
     ctx.shadowBlur = 0;
   }
 }

@@ -16,6 +16,8 @@ export interface BillboardData {
   brigade: { name: string; hits: number; eligible: boolean } | null;
   progress: number; // 0..1
   finalStone: boolean;
+  /** Annonce temporaire du Signal (« NOUVEAU FRAGMENT DÉCOUVERT », indice…). */
+  notice?: string | null;
 }
 
 /** Dimensions en blocs (largeur) et en hauteurs de bloc (vertical). */
@@ -148,7 +150,7 @@ export class BillboardLayer implements WorldLayer {
     ctx.fillStyle = '#ece9f5';
     ctx.font = `700 ${u * 0.55}px system-ui, sans-serif`;
     const pct = `${(d.progress * 100).toFixed(d.progress > 0 && d.progress < 0.01 ? 2 : 1).replace('.', ',')} %`;
-    ctx.fillText(`${d.finalStone ? '◆ Pierre finale en jeu · ' : ''}cube miné : ${pct}`, x1, py - u * 0.6);
+    ctx.fillText(`${d.finalStone ? '◆ Pierre finale en jeu · ' : d.notice ? `◈ ${d.notice} · ` : ''}cube miné : ${pct}`, x1, py - u * 0.6);
   }
 
   /** Lueur du panneau projetée sur le nord de la face (impression de hauteur et de lumière). */

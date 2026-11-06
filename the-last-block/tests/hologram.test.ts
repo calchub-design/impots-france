@@ -21,6 +21,10 @@ describe('écran holographique : alertes', () => {
     expect(holoAlert({ ...base, layer: 4, layerLeft: 0.05 })).toBe('▲ COUCHE 5 PRESQUE TERMINÉE');
     expect(holoAlert({ ...base, layer: 4, layerLeft: 0.2 })).toBeNull();
   });
+  it('annonce du Signal : prioritaire sur les alertes de couche, pas sur la Pierre finale', () => {
+    expect(holoAlert({ ...base, layer: 31, notice: 'Nouveau fragment découvert' })).toBe('◈ NOUVEAU FRAGMENT DÉCOUVERT');
+    expect(holoAlert({ ...base, finalStone: true, notice: 'Nouveau fragment découvert' })).toBe('◆ PIERRE FINALE EN JEU');
+  });
   it('dernière couche, puis Pierre finale prioritaire', () => {
     expect(holoAlert({ ...base, layer: 31 })).toBe('▲ DERNIÈRE COUCHE');
     expect(holoAlert({ ...base, layer: 31, finalStone: true })).toBe('◆ PIERRE FINALE EN JEU');

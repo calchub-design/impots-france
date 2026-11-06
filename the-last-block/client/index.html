@@ -39,7 +39,27 @@
               <span class="chip">rang <b id="hud-rank">—</b></span>
               <span class="chip extra"><b id="hud-hits">0</b> coups</span>
               <span class="chip extra"><b id="hud-online">—</b> en ligne</span>
+              <span class="chip signal" id="chip-signal" hidden></span>
               <span class="chip" id="chip-presence" title="Mineurs ayant frappé un bloc dans les 20 dernières secondes (observation réelle)"><b id="hud-presence">0</b> actifs</span>
+            </div>
+            <div class="discovery" id="discovery" hidden>
+              <div class="discovery-pulse" aria-hidden="true"></div>
+              <div class="discovery-card" role="status" aria-live="polite">
+                <svg class="discovery-glyph" viewBox="0 0 64 64" aria-hidden="true">
+                  <circle cx="32" cy="32" r="27" />
+                  <path d="M32 6 L54 45 H10 Z" />
+                  <circle cx="32" cy="32" r="9" />
+                  <path d="M32 23 V6 M23.5 37 L10 45 M40.5 37 L54 45" />
+                </svg>
+                <div class="discovery-kicker" id="discovery-kicker"></div>
+                <h3 class="discovery-title" id="discovery-title"></h3>
+                <p class="discovery-text" id="discovery-text"></p>
+                <div class="discovery-meta" id="discovery-meta"></div>
+                <div class="discovery-actions">
+                  <button type="button" id="discovery-open">Archives du cube</button>
+                  <button type="button" id="discovery-close" aria-label="Fermer l'annonce">✕</button>
+                </div>
+              </div>
             </div>
             <div class="map-box">
               <canvas id="minimap" aria-label="Mini-carte de la face : toucher pour s'y rendre"></canvas>
@@ -77,6 +97,7 @@
             <button role="tab" data-tab="board" class="active">Classement</button>
             <button role="tab" data-tab="brigade">Brigade</button>
             <button role="tab" data-tab="seasons">Saisons</button>
+            <button role="tab" data-tab="archives" id="archives-tab">Archives</button>
             <button role="tab" data-tab="profile">Profil</button>
           </nav>
 
@@ -121,6 +142,16 @@
             <h2>Saisons</h2>
             <ul class="seasons" id="season-list"></ul>
             <div id="season-detail"></div>
+          </div>
+
+          <div class="tab-body hidden" data-body="archives">
+            <div class="archives-head">
+              <h2>Archives du cube</h2>
+              <select id="archives-season" aria-label="Saison consultée"></select>
+            </div>
+            <p class="small muted" id="archives-summary">—</p>
+            <ol class="archives" id="archives-list"></ol>
+            <p class="muted small">Les fragments du Signal se révèlent quand la communauté détruit entièrement certaines couches. Ils appartiennent à tous les mineurs de la saison : aucun bonus, aucun titre individuel.</p>
           </div>
 
           <div class="tab-body hidden" data-body="profile">

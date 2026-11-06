@@ -213,7 +213,7 @@ code {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 0.25rem;
   background: var(--panel-2);
   border-radius: 10px;
@@ -1002,5 +1002,301 @@ body[data-renderer='monolith'] .vignette {
 @media (prefers-reduced-motion: reduce) {
   .mine-btn.waiting .pick {
     animation: none;
+  }
+}
+
+/* --- Le Signal : découvertes collectives ---------------------------------- */
+
+.chip.signal {
+  color: #bdf4ff;
+  border-color: rgba(127, 233, 255, 0.55);
+  background: rgba(20, 40, 70, 0.8);
+  box-shadow: 0 0 10px rgba(65, 224, 255, 0.25);
+}
+
+.chip.signal.near {
+  color: #f0dcff;
+  border-color: rgba(190, 130, 255, 0.75);
+  box-shadow: 0 0 12px rgba(160, 100, 255, 0.45);
+  animation: signal-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes signal-breathe {
+  50% {
+    box-shadow: 0 0 18px rgba(160, 100, 255, 0.75);
+  }
+}
+
+/* Annonce non bloquante : seule la carte capte le toucher ; le reste de la surface et
+   le bouton Miner restent utilisables. Composée par le navigateur (aucun coût canevas). */
+.discovery {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.discovery[hidden] {
+  display: none;
+}
+
+.discovery-pulse {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  width: 140vmax;
+  height: 140vmax;
+  margin: -70vmax 0 0 -70vmax;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(65, 224, 255, 0) 30%, rgba(65, 224, 255, 0.32) 42%, rgba(160, 100, 255, 0.28) 48%, rgba(160, 100, 255, 0) 58%);
+  transform: scale(0.05);
+  opacity: 0;
+  animation: signal-pulse 1.5s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+@keyframes signal-pulse {
+  10% {
+    opacity: 1;
+  }
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+.discovery-card {
+  pointer-events: auto;
+  position: absolute;
+  left: 50%;
+  top: 56px;
+  width: min(360px, calc(100% - 24px));
+  transform: translateX(-50%);
+  padding: 0.9rem 1rem 0.7rem;
+  border-radius: 14px 4px 14px 4px;
+  border: 1px solid rgba(127, 233, 255, 0.6);
+  background: linear-gradient(160deg, rgba(14, 30, 60, 0.94), rgba(30, 16, 58, 0.94));
+  box-shadow:
+    0 0 24px rgba(65, 224, 255, 0.28),
+    inset 0 0 18px rgba(160, 100, 255, 0.18);
+  color: var(--text);
+  text-align: center;
+  animation: signal-card 0.5s ease-out both;
+}
+
+@keyframes signal-card {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px) scale(0.96);
+    filter: blur(3px);
+  }
+}
+
+.discovery-glyph {
+  width: 46px;
+  height: 46px;
+  fill: none;
+  stroke: #7fe9ff;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 6px rgba(65, 224, 255, 0.8));
+  animation: signal-glyph 6s linear infinite;
+}
+
+.discovery-glyph circle:last-of-type {
+  stroke: #c79bff;
+}
+
+@keyframes signal-glyph {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.discovery-kicker {
+  margin-top: 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #7fe9ff;
+}
+
+.discovery-title {
+  margin: 0.25rem 0 0.4rem;
+  font-size: 1.15rem;
+  letter-spacing: 0.08em;
+  color: #fff;
+  text-shadow: 0 0 10px rgba(127, 233, 255, 0.7);
+  font-variant-numeric: tabular-nums;
+  min-height: 1.4em;
+}
+
+.discovery-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: #dfe8ff;
+}
+
+.discovery-meta {
+  margin-top: 0.45rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.discovery-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.discovery-actions button {
+  min-height: 36px;
+  padding: 0 0.8rem;
+  border-radius: 8px;
+  border: 1px solid rgba(127, 233, 255, 0.45);
+  background: rgba(65, 224, 255, 0.12);
+  color: #dff9ff;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Animations réduites : aucune impulsion ni rotation ; la carte apparaît telle quelle. */
+.discovery.still .discovery-pulse {
+  display: none;
+}
+
+.discovery.still .discovery-card,
+.discovery.still .discovery-glyph {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .discovery-pulse {
+    display: none;
+  }
+  .discovery-card,
+  .discovery-glyph,
+  .chip.signal.near {
+    animation: none;
+  }
+}
+
+/* Archives du cube */
+.archives-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.archives-head select {
+  min-height: 36px;
+  max-width: 50%;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 0.4rem;
+}
+
+.archives {
+  list-style: none;
+  margin: 0.4rem 0 0.8rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.frag {
+  display: grid;
+  grid-template-columns: 2rem 1fr;
+  gap: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.frag.revealed {
+  border-color: rgba(127, 233, 255, 0.45);
+  background: linear-gradient(160deg, rgba(20, 40, 72, 0.9), rgba(34, 22, 64, 0.9));
+}
+
+.frag-glyph {
+  font-size: 1.4rem;
+  line-height: 1.2;
+  text-align: center;
+  color: #7fe9ff;
+  text-shadow: 0 0 8px rgba(65, 224, 255, 0.7);
+}
+
+.frag.locked .frag-glyph {
+  color: #5d5a86;
+  text-shadow: none;
+}
+
+.frag-head {
+  font-weight: 700;
+  font-size: 0.86rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.frag.locked .frag-head {
+  color: var(--muted);
+}
+
+.frag-text {
+  margin: 0.3rem 0;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.frag-meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+@media (max-width: 420px) {
+  .tabs {
+    grid-template-columns: repeat(5, 1fr);
+  }
+  .tabs button {
+    font-size: 0.7rem;
+    padding: 0.5rem 0.05rem;
+  }
+}
+
+/* Téléphone : annonce plus compacte, pour laisser voir la surface de minage. */
+@media (max-width: 520px) {
+  .discovery-card {
+    top: 44px;
+    padding: 0.6rem 0.8rem 0.5rem;
+  }
+  .discovery-glyph {
+    width: 30px;
+    height: 30px;
+  }
+  .discovery-title {
+    font-size: 1rem;
+    margin: 0.15rem 0 0.25rem;
+  }
+  .discovery-text {
+    font-size: 0.82rem;
+    line-height: 1.35;
+  }
+  .discovery-meta {
+    display: none;
+  }
+  .discovery-actions {
+    margin-top: 0.45rem;
+  }
+  .discovery-actions button {
+    min-height: 32px;
   }
 }

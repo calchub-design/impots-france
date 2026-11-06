@@ -950,6 +950,7 @@ export class MonolithView implements WorldView {
       layers: this.camera.cubeSize,
       layerLeft: f ? alive / f.hp.length : 1,
       finalStone: d.finalStone,
+      notice: d.notice ?? null,
     };
   }
 
