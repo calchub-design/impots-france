@@ -1,3 +1,5 @@
+import { DISCOVERY_CONTENT, isKnownProfile } from './game/discoveries.js';
+
 /**
  * Configuration centralisée, lue depuis les variables d'environnement.
  * Voir `.env.example` pour la liste commentée.
@@ -21,6 +23,12 @@ export interface GameRules {
   autoStartSeason: boolean;
   seasonCooldownMs: number;
   leaderboardSize: number;
+  /**
+   * Profil de découvertes collectives des nouvelles saisons (`server/content/discoveries.json`),
+   * ou « none ». Un profil incompatible avec la taille du cube est signalé (journal du serveur,
+   * archives) et la saison démarre sans découverte : jamais deux fragments sur une même couche.
+   */
+  discoveryProfile: string;
 }
 
 export interface DonationSettings {
@@ -75,6 +83,12 @@ function str(env: Env, key: string, def: string): string {
   return raw === undefined ? def : raw;
 }
 
+function discoveryProfile(env: Env): string {
+  const v = str(env, 'DISCOVERY_PROFILE', 'standard').trim() || 'standard';
+  if (!isKnownProfile(v)) throw new Error(`Variable DISCOVERY_PROFILE invalide: "${v}" (profils : none, ${Object.keys(DISCOVERY_CONTENT.profiles).join(', ')})`);
+  return v;
+}
+
 export const DEFAULT_RULES: GameRules = {
   // 32 × 32 blocs par couche : une surface bien plus grande que l'écran (refonte « cube colossal »).
   cubeSize: 32,
@@ -90,6 +104,7 @@ export const DEFAULT_RULES: GameRules = {
   autoStartSeason: true,
   seasonCooldownMs: 60_000,
   leaderboardSize: 10,
+  discoveryProfile: 'standard',
 };
 
 export function loadConfig(env: Env = process.env): AppConfig {
@@ -117,6 +132,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       autoStartSeason: bool(env, 'AUTO_START_SEASON', true),
       seasonCooldownMs: int(env, 'SEASON_COOLDOWN_SECONDS', 60, 0, 30 * 24 * 3600) * 1000,
       leaderboardSize: int(env, 'LEADERBOARD_SIZE', 10, 1, 100),
+      discoveryProfile: discoveryProfile(env),
     },
     security: {
       trustProxy: bool(env, 'TRUST_PROXY', false),

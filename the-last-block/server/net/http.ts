@@ -113,6 +113,15 @@ export function createHttpHandler({ config, engine, stats }: HttpDeps) {
         return json(res, 200, { seasons: engine.listSeasons(50), nextSeasonAt: engine.upcomingSeasonAt });
       }
 
+      // Archives du cube : saison active (ou dernière terminée), ou ?season=<id>.
+      // Les fragments verrouillés n'ont ni titre ni texte.
+      if (path === '/api/discoveries' && req.method === 'GET') {
+        const raw = url.searchParams.get('season');
+        if (raw !== null && !/^\d{1,9}$/.test(raw)) return json(res, 400, { error: 'invalid_season' });
+        const log = engine.discoveryLog(raw === null ? undefined : Number(raw));
+        return log ? json(res, 200, { discoveries: log }) : json(res, 404, { error: 'not_found' });
+      }
+
       const m = /^\/api\/seasons\/(\d+)$/.exec(path);
       if (m && req.method === 'GET') {
         const r = engine.seasonResults(Number(m[1]));
@@ -131,7 +140,7 @@ export function createHttpHandler({ config, engine, stats }: HttpDeps) {
           return json(res, 401, { error: 'unauthorized' });
         }
         if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
-        const body = (await readBody(req)) as { name?: unknown; cubeSize?: unknown; durationHours?: unknown; baseHp?: unknown; hpPerLayer?: unknown };
+        const body = (await readBody(req)) as { name?: unknown; cubeSize?: unknown; durationHours?: unknown; baseHp?: unknown; hpPerLayer?: unknown; discoveryProfile?: unknown };
         if (path === '/api/admin/season/start') {
           const s = engine.startSeason({
             name: typeof body.name === 'string' ? body.name.slice(0, 40) : undefined,
@@ -139,8 +148,10 @@ export function createHttpHandler({ config, engine, stats }: HttpDeps) {
             durationMs: typeof body.durationHours === 'number' ? body.durationHours * 3600_000 : undefined,
             baseHp: typeof body.baseHp === 'number' ? body.baseHp : undefined,
             hpPerLayer: typeof body.hpPerLayer === 'number' ? body.hpPerLayer : undefined,
+            discoveryProfile: typeof body.discoveryProfile === 'string' ? body.discoveryProfile : undefined,
           });
-          return json(res, 200, { season: engine.seasonInfo(s) });
+          // Le journal signale un profil de découvertes incompatible avec ce cube (invalidProfile).
+          return json(res, 200, { season: engine.seasonInfo(s), discoveries: engine.discoveryLog(s.id) });
         }
         if (path === '/api/admin/season/end') {
           return json(res, 200, { season: engine.endSeason('admin') });

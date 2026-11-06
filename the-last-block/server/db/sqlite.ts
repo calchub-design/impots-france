@@ -6,6 +6,7 @@ import type {
   BrigadeContributionRow,
   BrigadeRow,
   ContributionRow,
+  DiscoveryRow,
   GameStore,
   HitRow,
   PlayerRow,
@@ -113,6 +114,23 @@ CREATE TABLE IF NOT EXISTS brigade_members (
 );
 CREATE INDEX IF NOT EXISTS brigade_members_b ON brigade_members(brigade_id);
 
+-- Découvertes collectives : plan figé au début de la saison (textes compris),
+-- révélation enregistrée dans la même transaction que le coup qui achève la couche.
+CREATE TABLE IF NOT EXISTS discoveries (
+  season_id INTEGER NOT NULL,
+  fragment_id TEXT NOT NULL,
+  ord INTEGER NOT NULL,
+  code TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  layer INTEGER NOT NULL,
+  revealed_at INTEGER,
+  closing_player_id TEXT,
+  PRIMARY KEY (season_id, fragment_id),
+  UNIQUE (season_id, ord),
+  UNIQUE (season_id, layer)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS season_results (
   season_id INTEGER NOT NULL,
   kind TEXT NOT NULL,
@@ -148,6 +166,10 @@ export class SqliteStore implements GameStore {
     const cols = this.db.prepare('PRAGMA table_info(players)').all() as { name: string }[];
     if (!cols.some((c) => c.name === 'name_key')) this.db.exec('ALTER TABLE players ADD COLUMN name_key TEXT');
     if (!cols.some((c) => c.name === 'presence_hidden')) this.db.exec('ALTER TABLE players ADD COLUMN presence_hidden INTEGER NOT NULL DEFAULT 0');
+    const scols = this.db.prepare('PRAGMA table_info(seasons)').all() as { name: string }[];
+    // Profil de découvertes de la saison (NULL : saison antérieure aux découvertes, plan à créer).
+    if (!scols.some((c) => c.name === 'discovery_profile')) this.db.exec('ALTER TABLE seasons ADD COLUMN discovery_profile TEXT');
+    if (!scols.some((c) => c.name === 'discovery_error')) this.db.exec('ALTER TABLE seasons ADD COLUMN discovery_error TEXT');
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS players_name_key ON players(name_key)');
     // Rattrapage : pseudos sans clé (v1). En cas de doublon historique, la clé
     // reste NULL : ce joueur devra changer de pseudo pour en réserver un.
@@ -283,6 +305,41 @@ export class SqliteStore implements GameStore {
   }
 
   // --- Blocs ---------------------------------------------------------------
+
+  // --- Découvertes ----------------------------------------------------------
+  setSeasonDiscoveries(seasonId: number, profile: string, error: string | null, rows: Omit<DiscoveryRow, 'season_id' | 'revealed_at' | 'closing_player_id'>[]) {
+    this.transaction(() => {
+      this.run('UPDATE seasons SET discovery_profile = ?, discovery_error = ? WHERE id = ?', profile, error, seasonId);
+      const ins = this.st('INSERT INTO discoveries(season_id, fragment_id, ord, code, title, body, layer) VALUES (?,?,?,?,?,?,?)');
+      for (const r of rows) ins.run(seasonId, r.fragment_id, r.ord, r.code, r.title, r.body, r.layer);
+    });
+  }
+  listDiscoveries(seasonId: number): DiscoveryRow[] {
+    return this.all<DiscoveryRow>('SELECT * FROM discoveries WHERE season_id = ? ORDER BY ord', seasonId);
+  }
+  revealDiscovery(seasonId: number, layer: number, at: number, playerId: string): DiscoveryRow | undefined {
+    // Conditions cumulées : pas encore révélée ET plus aucun bloc vivant dans la couche.
+    return this.get<DiscoveryRow>(
+      `UPDATE discoveries SET revealed_at = ?, closing_player_id = ?
+       WHERE season_id = ? AND layer = ? AND revealed_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.season_id = ? AND b.layer = ? AND b.hp > 0)
+       RETURNING *`,
+      at, playerId, seasonId, layer, seasonId, layer,
+    );
+  }
+  reconcileDiscoveries(seasonId: number): DiscoveryRow[] {
+    // Couches entièrement détruites dont le fragment n'est pas marqué révélé (base
+    // antérieure, ou édition manuelle) : date et auteur du dernier bloc détruit.
+    return this.all<DiscoveryRow>(
+      `UPDATE discoveries AS d SET
+         revealed_at = (SELECT MAX(b.destroyed_at) FROM blocks b WHERE b.season_id = d.season_id AND b.layer = d.layer),
+         closing_player_id = (SELECT b.destroyed_by FROM blocks b WHERE b.season_id = d.season_id AND b.layer = d.layer ORDER BY b.destroyed_at DESC LIMIT 1)
+       WHERE d.season_id = ? AND d.revealed_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.season_id = d.season_id AND b.layer = d.layer AND b.hp > 0)
+       RETURNING *`,
+      seasonId,
+    ).sort((a, b) => a.ord - b.ord);
+  }
 
   loadBlockHp(seasonId: number) {
     return this.all<{ layer: number; idx: number; hp: number }>(

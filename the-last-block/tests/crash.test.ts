@@ -311,3 +311,58 @@ describe('fenêtres de crash entre deux transactions', () => {
     }
   });
 });
+
+describe('arrêt brutal (SIGKILL) et découvertes collectives', () => {
+  it('découvertes confirmées conservées à l\'identique, aucune en double, aucune révélée pour une couche inachevée', async () => {
+    const db = tempDbPath();
+    cleanups.push(db.cleanup);
+    // Cube de 4 couches de 4 × 4 blocs à 1 PV, profil de démonstration : un fragment par couche.
+    const env = { CUBE_SIZE: '4', BLOCK_BASE_HP: '1', BLOCK_HP_PER_LAYER: '0', DISCOVERY_PROFILE: 'mini-48h', MAX_ACTIONS_PER_SECOND: '100' };
+    let { proc, port } = await startProcess(db.path, env);
+    const A = new TestClient(`ws://127.0.0.1:${port}/ws`);
+    const B = new TestClient(`ws://127.0.0.1:${port}/ws`);
+    await A.connect(undefined, 'Alpha');
+    await B.connect(undefined, 'Bravo');
+    for (let layer = 0; layer < 2; layer++) {
+      for (let i = 0; i < 16; i++) expect((await A.mine(layer, i)).ok).toBe(true);
+    }
+    const isPred = (m: { t: string; fragment?: { id: string } }) => m.t === 'discovery' && m.fragment?.id === 'predecessors';
+    if (!B.received.some(isPred)) await B.waitFor(isPred);
+    const seen = B.received.filter((m) => m.t === 'discovery').map((m) => (m.t === 'discovery' ? m.fragment : null));
+    expect(seen.map((f) => f!.id)).toEqual(['echo', 'predecessors']);
+    // Rafale sur la couche 3 (sans attendre les réponses), puis SIGKILL en plein vol.
+    for (let i = 0; i < 15; i++) A.send({ t: 'mine', actionId: `rafale-${i}-xxxxxxxx`, layer: 2, block: i });
+    await new Promise((r) => setTimeout(r, 15));
+    await kill9(proc);
+    await A.close().catch(() => {});
+    await B.close().catch(() => {});
+
+    ({ proc, port } = await startProcess(db.path, env));
+    const C = new TestClient(`ws://127.0.0.1:${port}/ws`);
+    const w = await C.connect(undefined, 'Charlie');
+    const log = w.discoveries!;
+    const revealed = log.fragments.filter((f) => f.revealed);
+    expect(revealed.map((f) => f.id)).toEqual(['echo', 'predecessors']);
+    // Mêmes dates de révélation qu'avant l'arrêt brutal.
+    expect(revealed.map((f) => f.revealedAt)).toEqual(seen.map((f) => f!.revealedAt));
+    expect(w.cube!.currentLayer).toBe(2);
+    await C.close();
+    await kill9(proc);
+
+    checkInvariants(db.path);
+    const raw = new DatabaseSync(db.path);
+    try {
+      const rows = raw
+        .prepare(
+          `SELECT d.layer, d.revealed_at, (SELECT COUNT(*) FROM blocks b WHERE b.season_id = d.season_id AND b.layer = d.layer AND b.hp > 0) AS alive
+           FROM discoveries d ORDER BY d.ord`,
+        )
+        .all() as { layer: number; revealed_at: number | null; alive: number }[];
+      expect(rows).toHaveLength(4);
+      // Révélée si et seulement si la couche est entièrement détruite.
+      for (const r of rows) expect(r.revealed_at !== null).toBe(r.alive === 0);
+    } finally {
+      raw.close();
+    }
+  }, 60_000);
+});

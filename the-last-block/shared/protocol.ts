@@ -4,6 +4,8 @@
  * Le serveur est autoritaire : le client n'envoie que des intentions.
  */
 
+import type { DiscoveryFragment, DiscoveryLog } from './discoveries.js';
+
 export const PROTOCOL_VERSION = 1;
 
 /** Identifiant d'action client : 8 à 64 caractères URL-safe. */
@@ -180,6 +182,11 @@ export interface WelcomeMessage {
   presence: PresenceEntry[];
   /** Ma position est-elle partagée avec les autres joueurs ? */
   presenceVisible: boolean;
+  /**
+   * Archives du cube de la saison active (ou de la dernière terminée). Champ
+   * optionnel ajouté sans changer PROTOCOL_VERSION : les anciens clients l'ignorent.
+   */
+  discoveries?: DiscoveryLog | null;
 }
 
 export interface MineResultMessage {
@@ -229,6 +236,8 @@ export type ServerMessage =
       projection: SeasonProjection | null;
       presence: PresenceEntry[];
     }
+  /** Fragment révélé (couche entièrement détruite, validée par le serveur), envoyé à tous. */
+  | { t: 'discovery'; seasonId: number; fragment: DiscoveryFragment; discoveries: DiscoveryLog }
   | { t: 'token'; token: string }
   | { t: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null }
   | { t: 'seasonStarted' }

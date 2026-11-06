@@ -16,7 +16,9 @@ import {
 } from '../../shared/protocol.js';
 import { DEFAULT_SKIN, isValidSkin } from '../../shared/skins.js';
 import type { GameRules } from '../config.js';
-import type { GameStore, SeasonResultRow, SeasonRow } from '../db/store.js';
+import type { DiscoveryRow, GameStore, SeasonResultRow, SeasonRow } from '../db/store.js';
+import type { DiscoveryFragment, DiscoveryLog } from '../../shared/discoveries.js';
+import { buildDiscoveryPlan, isKnownProfile, NO_DISCOVERIES } from './discoveries.js';
 import { generateGuestToken, hashToken, isWellFormedToken } from '../auth/guest.js';
 import { activeCredit, dayKey, nextDayStart } from './playtime.js';
 import { SlidingWindowLimiter } from './rateLimiter.js';
@@ -50,6 +52,7 @@ export type MineResult =
 export type EngineEvent =
   | { type: 'block'; seasonId: number; layer: number; block: number; hp: number; playerId: string }
   | { type: 'layer'; seasonId: number; layer: number }
+  | { type: 'discovery'; seasonId: number; fragment: DiscoveryFragment }
   | { type: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null }
   | { type: 'seasonStarted'; seasonId: number }
   | { type: 'brigadeChanged'; brigadeId: string; playerIds: string[] }
@@ -85,6 +88,8 @@ interface ActiveState {
   destroyed: number;
   players: Map<string, Contribution>;
   brigades: Map<string, Contribution>;
+  /** Plan des découvertes de la saison (figé au démarrage). */
+  discoveries: DiscoveryRow[];
 }
 
 export interface EngineOptions {
@@ -375,6 +380,7 @@ export class GameEngine {
     const newPlayMs = Math.min(this.rules.dailyActiveLimitMs, p.playMs + credit);
     const brigadeId = p.brigadeId;
     let hpAfter: number;
+    let revealed: DiscoveryRow | undefined;
     try {
       hpAfter = this.store.transaction(() => {
         const hp = this.store.damageBlock(st.season.id, L, B, playerId, now);
@@ -395,6 +401,13 @@ export class GameEngine {
         if (brigadeId) this.store.addBrigadeContribution(st.season.id, brigadeId, destroyed, now);
         this.store.setPlaytime(playerId, p.playDay, newPlayMs);
         this.store.setLastActionAt(playerId, now);
+        // Découverte : dans la MÊME transaction que le coup qui achève la couche. La
+        // requête vérifie en base que la couche est vide et que le fragment n'est pas
+        // déjà révélé : un seul enregistrement possible, même en cas de coups simultanés.
+        revealed = undefined;
+        if (destroyed && st.layerRemaining[L] === 1 && st.discoveries.some((d) => d.layer === L && d.revealed_at === null)) {
+          revealed = this.store.revealDiscovery(st.season.id, L, now, playerId);
+        }
         return hp;
       });
     } catch (err) {
@@ -423,6 +436,12 @@ export class GameEngine {
     this.rankDirty = true;
 
     this.emit({ type: 'block', seasonId: st.season.id, layer: L, block: B, hp: hpAfter, playerId });
+    if (revealed) {
+      const row = revealed;
+      const i = st.discoveries.findIndex((d) => d.fragment_id === row.fragment_id);
+      if (i >= 0) st.discoveries[i] = row;
+      this.emit({ type: 'discovery', seasonId: st.season.id, fragment: publicFragment(row) });
+    }
 
     if (destroyed) {
       st.destroyed++;
@@ -454,7 +473,7 @@ export class GameEngine {
   // Saisons
   // =========================================================================
 
-  private loadSeason(season: SeasonRow) {
+  private loadSeason(season: SeasonRow, discoveryProfile?: string) {
     const size = season.cube_size;
     const perLayer = size * size;
     const hp = new Int32Array(size * perLayer);
@@ -477,10 +496,59 @@ export class GameEngine {
     let remainingHp = 0;
     for (let i = 0; i < hp.length; i++) remainingHp += hp[i];
     const totalHp = layerMaxHp.reduce((s, h) => s + h * perLayer, 0);
-    const st: ActiveState = { season, totalHp, remainingHp, size, perLayer, hp, layerMaxHp, layerRemaining, currentLayer: 0, destroyed, players, brigades };
+    const discoveries = this.prepareDiscoveries(season, discoveryProfile);
+    const st: ActiveState = { season, totalHp, remainingHp, size, perLayer, hp, layerMaxHp, layerRemaining, currentLayer: 0, destroyed, players, brigades, discoveries };
     st.currentLayer = this.firstLayerWithBlocks(st);
     this.state = st;
     this.sortedPlayers = null;
+  }
+
+  /**
+   * Plan des découvertes de la saison : créé une seule fois (nouvelle saison, ou
+   * saison antérieure aux découvertes), puis réconciliation idempotente des
+   * couches déjà entièrement détruites dont le fragment ne serait pas marqué.
+   */
+  private prepareDiscoveries(season: SeasonRow, requested?: string): DiscoveryRow[] {
+    if (season.discovery_profile == null) {
+      const profile = requested ?? this.rules.discoveryProfile ?? NO_DISCOVERIES;
+      const plan = buildDiscoveryPlan(profile, season.cube_size);
+      this.store.setSeasonDiscoveries(
+        season.id,
+        profile,
+        plan.ok ? null : plan.error,
+        plan.ok ? plan.fragments.map((f) => ({ fragment_id: f.id, ord: f.order, code: f.code, title: f.title, body: f.text, layer: f.layer })) : [],
+      );
+      season.discovery_profile = profile;
+      season.discovery_error = plan.ok ? null : plan.error;
+    }
+    this.store.reconcileDiscoveries(season.id);
+    return this.store.listDiscoveries(season.id);
+  }
+
+  /**
+   * Archives du cube d'une saison (active par défaut, sinon la dernière terminée).
+   * Les fragments verrouillés ne portent ni titre ni texte.
+   */
+  discoveryLog(seasonId?: number): DiscoveryLog | null {
+    const st = this.state;
+    let season: SeasonRow | undefined;
+    let rows: DiscoveryRow[];
+    if (st && (seasonId === undefined || seasonId === st.season.id)) {
+      season = st.season;
+      rows = st.discoveries;
+    } else {
+      season = seasonId === undefined ? this.store.getLastEndedSeason() : this.store.getSeason(seasonId);
+      if (!season) return null;
+      rows = this.store.listDiscoveries(season.id);
+    }
+    return {
+      seasonId: season.id,
+      seasonName: season.name,
+      seasonStatus: season.status,
+      profile: season.discovery_profile ?? NO_DISCOVERIES,
+      ...(season.discovery_error ? { invalidProfile: season.discovery_error } : {}),
+      fragments: rows.map(publicFragment),
+    };
   }
 
   get activeSeason(): SeasonRow | null {
@@ -491,7 +559,7 @@ export class GameEngine {
     return this.state ? null : this.nextSeasonAt;
   }
 
-  startSeason(opts: { name?: string; cubeSize?: number; durationMs?: number; baseHp?: number; hpPerLayer?: number } = {}): SeasonRow {
+  startSeason(opts: { name?: string; cubeSize?: number; durationMs?: number; baseHp?: number; hpPerLayer?: number; discoveryProfile?: string } = {}): SeasonRow {
     if (this.state) throw new GameError('season_active', 'Une saison est déjà en cours.');
     const now = this.now();
     const count = this.store.listSeasons(1)[0]?.id ?? 0;
@@ -503,6 +571,12 @@ export class GameEngine {
     const hpPerLayer = opts.hpPerLayer ?? this.rules.hpPerLayer;
     if (!Number.isInteger(baseHp) || baseHp < 1 || baseHp > 1_000_000) throw new GameError('invalid_hp', 'Résistance de base invalide.');
     if (!Number.isInteger(hpPerLayer) || hpPerLayer < 0 || hpPerLayer > 1_000_000) throw new GameError('invalid_hp', 'Progression de résistance invalide.');
+    // Profil demandé explicitement (administration) : il doit convenir à ce cube.
+    if (opts.discoveryProfile !== undefined) {
+      if (typeof opts.discoveryProfile !== 'string' || !isKnownProfile(opts.discoveryProfile)) throw new GameError('invalid_discovery_profile', 'Profil de découvertes inconnu.');
+      const plan = buildDiscoveryPlan(opts.discoveryProfile, cubeSize);
+      if (!plan.ok) throw new GameError('invalid_discovery_profile', plan.error);
+    }
     const season = this.store.createSeason({
       name: opts.name?.trim() || `Saison ${count + 1}`,
       cubeSize,
@@ -512,7 +586,7 @@ export class GameEngine {
       endsAt: now + durationMs,
     });
     this.nextSeasonAt = null;
-    this.loadSeason(season);
+    this.loadSeason(season, opts.discoveryProfile);
     this.emit({ type: 'seasonStarted', seasonId: season.id });
     return season;
   }
@@ -836,6 +910,14 @@ export class GameEngine {
   private emitBrigade(brigadeId: string) {
     this.emit({ type: 'brigadeChanged', brigadeId, playerIds: this.store.listMembers(brigadeId).map((m) => m.id) });
   }
+}
+
+/** Fragment pour le navigateur : titre et texte uniquement s'il est révélé. */
+function publicFragment(d: DiscoveryRow): DiscoveryFragment {
+  const base = { id: d.fragment_id, order: d.ord, code: d.code, layer: d.layer + 1 };
+  return d.revealed_at === null
+    ? { ...base, revealed: false }
+    : { ...base, revealed: true, title: d.title, text: d.body, revealedAt: d.revealed_at };
 }
 
 function bump(map: Map<string, Contribution>, key: string, destroyed: boolean, at: number) {

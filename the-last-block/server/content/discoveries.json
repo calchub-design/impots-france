@@ -1,0 +1,62 @@
+{
+  "fragments": [
+    {
+      "id": "echo",
+      "code": "01",
+      "title": "L'Écho",
+      "text": "Un signal a été détecté sous la surface. Chaque impact semble provoquer une réponse venue des profondeurs."
+    },
+    {
+      "id": "coordinates",
+      "code": "02",
+      "title": "Les Coordonnées",
+      "text": "Des symboles inconnus apparaissent dans la structure. Leur disposition ressemble à une carte, mais aucun lieu connu ne correspond."
+    },
+    {
+      "id": "predecessors",
+      "code": "03",
+      "title": "Les Prédécesseurs",
+      "text": "Des marques d'excavation ont été découvertes. Nous ne sommes pas les premiers à avoir tenté d'ouvrir ce cube."
+    },
+    {
+      "id": "warning",
+      "code": "04",
+      "title": "L'Avertissement",
+      "text": "Une transmission fragmentée vient d'être déchiffrée : N'OUVREZ PAS LE CŒUR SEULS."
+    },
+    {
+      "id": "consciousness",
+      "code": "05",
+      "title": "La Conscience",
+      "text": "Le signal réagit à l'activité collective des mineurs. Plus les participants agissent ensemble, plus les motifs deviennent complexes."
+    },
+    {
+      "id": "final-transmission",
+      "code": "06",
+      "title": "La Transmission finale",
+      "text": "Transmission complète. Le premier cube n'était qu'un signal."
+    }
+  ],
+  "profiles": {
+    "standard": {
+      "label": "Saison standard (six fragments)",
+      "steps": [
+        { "fragment": "echo", "at": 0.1 },
+        { "fragment": "coordinates", "at": 0.25 },
+        { "fragment": "predecessors", "at": 0.45 },
+        { "fragment": "warning", "at": 0.65 },
+        { "fragment": "consciousness", "at": 0.85 },
+        { "fragment": "final-transmission", "at": "last" }
+      ]
+    },
+    "mini-48h": {
+      "label": "Mini-saison de démonstration (quatre fragments)",
+      "steps": [
+        { "fragment": "echo", "at": 0.25 },
+        { "fragment": "predecessors", "at": 0.5 },
+        { "fragment": "warning", "at": 0.75 },
+        { "fragment": "final-transmission", "at": "last" }
+      ]
+    }
+  }
+}

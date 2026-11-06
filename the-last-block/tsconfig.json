@@ -8,6 +8,7 @@
     "noUncheckedIndexedAccess": false,
     "noImplicitOverride": true,
     "esModuleInterop": true,
+    "resolveJsonModule": true,
     "skipLibCheck": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,

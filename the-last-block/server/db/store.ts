@@ -33,6 +33,24 @@ export interface SeasonRow {
   champion_player_id: string | null;
   champion_brigade_id: string | null;
   final_stone_player_id: string | null;
+  /** Profil de découvertes ; NULL pour une saison créée avant les découvertes. */
+  discovery_profile?: string | null;
+  /** Profil incompatible avec ce cube : raison (aucune découverte cette saison). */
+  discovery_error?: string | null;
+}
+
+export interface DiscoveryRow {
+  season_id: number;
+  fragment_id: string;
+  ord: number;
+  code: string;
+  title: string;
+  body: string;
+  /** Couche déclencheuse (0 = sommet). */
+  layer: number;
+  revealed_at: number | null;
+  /** Journal technique : auteur du dernier bloc de la couche (aucun avantage). */
+  closing_player_id: string | null;
 }
 
 export interface HitRow {
@@ -141,6 +159,14 @@ export interface GameStore {
   listBrigades(): (BrigadeRow & { members: number })[];
 
   // Archives
+  // Découvertes collectives
+  setSeasonDiscoveries(seasonId: number, profile: string, error: string | null, rows: Omit<DiscoveryRow, 'season_id' | 'revealed_at' | 'closing_player_id'>[]): void;
+  listDiscoveries(seasonId: number): DiscoveryRow[];
+  /** Révèle le fragment de la couche si elle est entièrement détruite et qu'il ne l'est pas déjà. */
+  revealDiscovery(seasonId: number, layer: number, at: number, playerId: string): DiscoveryRow | undefined;
+  /** Réconciliation idempotente : révèle les fragments des couches déjà entièrement détruites. */
+  reconcileDiscoveries(seasonId: number): DiscoveryRow[];
+
   insertSeasonResults(rows: SeasonResultRow[]): void;
   getSeasonResults(seasonId: number): SeasonResultRow[];
 }

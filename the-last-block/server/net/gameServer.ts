@@ -175,6 +175,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       projection: engine.projection(),
       presence: engine.presence(),
       presenceVisible: engine.presenceVisible(playerId),
+      discoveries: engine.discoveryLog(),
     };
   }
 
@@ -190,6 +191,11 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
         pendingSeason = e.seasonId;
         pending.push([e.layer, e.block, e.hp]);
         boardDirty = true;
+        break;
+      case 'discovery':
+        // Le coup qui achève la couche part d'abord, puis la découverte, à tous.
+        flushDeltas();
+        broadcast({ t: 'discovery', seasonId: e.seasonId, fragment: e.fragment, discoveries: engine.discoveryLog(e.seasonId)! });
         break;
       case 'layer': {
         flushDeltas();
