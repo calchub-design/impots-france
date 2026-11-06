@@ -44,10 +44,11 @@ npm start         # sert le client et le WebSocket sur PORT (8080)
 ## Tests
 
 ```bash
-npm test             # 133 tests Vitest (13 fichiers), ~6 s
+npm test             # 155 tests Vitest (14 fichiers), ~10 s
 npm run typecheck    # TypeScript (serveur, client, tests, scripts)
 npm run build && npm run e2e -- --rendu monolithe   # test réel : deux Chromium (mobile tactile + bureau), 31 vérifications
 npm run e2e -- --rendu classique                     # mêmes scénarios avec le rendu classique
+npm run e2e:decouvertes -- --rendu monolithe         # découvertes « Le Signal » : deux navigateurs, révélation partagée (aussi --rendu classique, --cpu 4)
 npm run loadtest -- --bots 100 --seconds 15
 npm run calibrate -- --days 30 --players 200 --minutes 30
 ```
@@ -68,7 +69,8 @@ npm run calibrate -- --days 30 --players 200 --minutes 30
 | `tests/persp.test.ts` | caméra en perspective du rendu monolithe : projection, aller-retour, transition minage ⇄ monument, cadrage, glisser exact, échelle locale des balises |
 | `tests/presence.test.ts` | présence observée : expiration 20 s, coups refusés ignorés, masquage, changement de couche, WebSocket |
 | `tests/labels.test.ts` | pseudos des mineurs sans chevauchement : foule dense, priorité aux alliés, zones d'interface réservées |
-| `tests/hologram.test.ts` | alertes de l'écran holographique (couche presque terminée, dernière couche, Pierre finale) |
+| `tests/hologram.test.ts` | alertes de l'écran holographique (couche presque terminée, dernière couche, Pierre finale, annonce du Signal) |
+| `tests/discoveries.test.ts` | découvertes « Le Signal » : couches déclencheuses, révélation exacte et unique, indices, fin de saison, nouvelle saison, redémarrage, réconciliation, WebSocket |
 
 Le script `npm run e2e` utilise deux navigateurs distincts : un iPhone 13 émulé, avec gestes tactiles réels via CDP, et un ordinateur. Il vérifie le glisser, le pincer, la sélection et le minage après déplacement, la synchronisation des destructions, la présence, le panneau, l'absence de chevauchement à 5 tailles d'écran, un SIGKILL du serveur, `prefers-reduced-motion`, la fin de saison, l'absence d'erreur JavaScript, et mesure les performances. Détails et résultats : [docs/REFONTE.md](docs/REFONTE.md).
 
@@ -94,6 +96,14 @@ npm run calibrate -- --days 30 --players 200 --minutes 30
 Le script propose `CUBE_SIZE`, `BLOCK_BASE_HP`, `BLOCK_HP_PER_LAYER` et `SEASON_DURATION_HOURS=720` pour que le cube soit fini vers 90 % de la saison (option `--target`), en fonction de la fréquentation estimée. Pendant la saison, `GET /api/season/projection` (et l'onglet *Saisons*) donne le rythme moyen réel et la date de fin estimée.
 
 **Achèvement anticipé** : si le cube est terminé avant l'échéance, la saison se clôt immédiatement (`endReason: completed`). La Pierre finale et le champion sont attribués, et l'avance sur l'échéance est indiquée (`completedEarlyMs`, fenêtre de fin de saison, archives). La saison suivante démarre après `SEASON_COOLDOWN_SECONDS`, avec une nouvelle échéance complète. Si l'échéance arrive avant la fin du cube, la saison se clôt par `timeout` sans Pierre finale.
+
+## Découvertes collectives : « Le Signal »
+
+Chaque couche importante du cube cache un fragment d'un message venu d'une technologie inconnue. Six fragments en saison 1, aux couches correspondant à 10, 25, 45, 65 et 85 % de la profondeur, puis à la dernière couche. Un fragment se révèle à **tous** les joueurs quand la communauté détruit entièrement sa couche. Le serveur l'enregistre dans la même transaction que le dernier coup. Aucun avantage, aucun titre individuel.
+
+À l'approche d'une couche qui cache un fragment, un indice discret apparaît : « Anomalie détectée », puis « Signal presque accessible ». Les fragments révélés se consultent dans le menu, onglet **Archives** (« Archives du cube »).
+
+Les textes et les profils de déclenchement se trouvent dans `server/content/discoveries.json`, et le profil se choisit avec `DISCOVERY_PROFILE` (`standard`, `mini-48h`, `none`). Détails, tests, performances et limites : [docs/DECOUVERTES.md](docs/DECOUVERTES.md).
 
 ## Rendu « monolithe » (par défaut)
 
@@ -131,8 +141,9 @@ the-last-block/
 | GET | `/api/stats` | Compteurs (connexions, refus, coups, mémoire) — à protéger en production |
 | GET | `/api/seasons` | Saisons (en cours et archivées) avec champion, brigade, Pierre finale, avance éventuelle |
 | GET | `/api/seasons/:id` | Classement final archivé |
+| GET | `/api/discoveries[?season=id]` | Archives du cube (saison en cours ou demandée) ; fragments verrouillés sans titre ni texte |
 | GET | `/api/season/projection` | Avancement et date de fin estimée de la saison en cours |
-| POST | `/api/admin/season/start` | `{name?, cubeSize?, durationHours?, baseHp?, hpPerLayer?}` — `Authorization: Bearer $ADMIN_TOKEN` |
+| POST | `/api/admin/season/start` | `{name?, cubeSize?, durationHours?, baseHp?, hpPerLayer?, discoveryProfile?}` — `Authorization: Bearer $ADMIN_TOKEN` |
 | POST | `/api/admin/season/end` | Clôture la saison en cours |
 
 ## Fonctionnalités

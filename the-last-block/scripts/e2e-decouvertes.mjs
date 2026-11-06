@@ -35,6 +35,8 @@ const arg = (name, def) => {
   return i > 0 ? process.argv[i + 1] : def;
 };
 const RENDU = arg('--rendu', 'monolithe');
+// --cpu 4 : processeur du téléphone ralenti pendant la révélation (mesure de fluidité).
+const CPU = Number(arg('--cpu', '1'));
 const OUT = resolve(arg('--out', 'e2e-output'));
 const Q = `rendu=${RENDU}`;
 mkdirSync(OUT, { recursive: true });
@@ -252,6 +254,8 @@ try {
   await A.touchscreen.tap(pt[0], pt[1]);
   await A.waitForTimeout(200);
   check('toucher : dernier bloc sélectionné', (await A.evaluate(() => window.tlb.state.selected)) === lastTarget);
+  const cdpA = await ctxA.newCDPSession(A);
+  if (CPU > 1) await cdpA.send('Emulation.setCPUThrottlingRate', { rate: CPU });
   const t0 = Date.now();
   await A.tap('#mine-btn');
   await Promise.all(
@@ -259,16 +263,30 @@ try {
   );
   metrics.revelationMs = Date.now() - t0;
   // Mesure de fluidité pendant l'animation (téléphone).
-  const fps = await A.evaluate(
+  const perf = await A.evaluate(
     () =>
       new Promise((r) => {
         let n = 0;
-        const t = performance.now();
-        const f = () => (performance.now() - t < 1500 ? (n++, requestAnimationFrame(f)) : r(Math.round(n / 1.5)));
+        let last = performance.now();
+        let worst = 0;
+        const t = last;
+        const f = () => {
+          const now = performance.now();
+          worst = Math.max(worst, now - last);
+          last = now;
+          if (now - t < 1500) {
+            n++;
+            requestAnimationFrame(f);
+          } else r({ fps: Math.round(n / 1.5), worstMs: Math.round(worst) });
+        };
         requestAnimationFrame(f);
       }),
   );
+  if (CPU > 1) await cdpA.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+  const fps = perf.fps;
+  metrics.cpu = CPU;
   metrics.fpsPendantAnimation = fps;
+  metrics.pireImageMs = perf.worstMs;
   await A.waitForTimeout(400);
   const [oa, ob] = [await overlay(A), await overlay(B)];
   const logA = await A.evaluate(() => window.tlb.state.discoveries);
@@ -286,7 +304,7 @@ try {
   }
   check(
     `animation : impulsion et carte animées (${fps} images/s pendant l'animation)`,
-    !oa.still && oa.cardAnim !== 'none' && oa.pulse !== 'none' && fps >= 20,
+    !oa.still && oa.cardAnim !== 'none' && oa.pulse !== 'none' && fps >= (CPU > 1 ? 15 : 20),
     `${oa.cardAnim}, ${fps} img/s`,
   );
   await A.screenshot({ path: join(OUT, `signal-revelation-mobile-${RENDU}.png`) });
