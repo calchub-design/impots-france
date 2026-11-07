@@ -115,6 +115,8 @@ export class GameEngine {
   private readonly playerCache = new Map<string, PlayerCache>();
   private state: ActiveState | null = null;
   private nextSeasonAt: number | null = null;
+  /** Dernier refus de création automatique de saison (configuration invalide), sinon null. */
+  seasonStartError: string | null = null;
   private brigadeCache: Map<string, { name: string; members: number }> | null = null;
   private sortedPlayers: [string, Contribution][] | null = null;
   private rankDirty = true;
@@ -571,11 +573,19 @@ export class GameEngine {
     const hpPerLayer = opts.hpPerLayer ?? this.rules.hpPerLayer;
     if (!Number.isInteger(baseHp) || baseHp < 1 || baseHp > 1_000_000) throw new GameError('invalid_hp', 'Résistance de base invalide.');
     if (!Number.isInteger(hpPerLayer) || hpPerLayer < 0 || hpPerLayer > 1_000_000) throw new GameError('invalid_hp', 'Progression de résistance invalide.');
-    // Profil demandé explicitement (administration) : il doit convenir à ce cube.
-    if (opts.discoveryProfile !== undefined) {
-      if (typeof opts.discoveryProfile !== 'string' || !isKnownProfile(opts.discoveryProfile)) throw new GameError('invalid_discovery_profile', 'Profil de découvertes inconnu.');
-      const plan = buildDiscoveryPlan(opts.discoveryProfile, cubeSize);
-      if (!plan.ok) throw new GameError('invalid_discovery_profile', plan.error);
+    // Profil de découvertes (demandé, sinon celui de la configuration) : il doit convenir à
+    // ce cube, sinon la saison n'est PAS créée. Une saison sans découverte se configure
+    // explicitement avec le profil « none ».
+    const discoveryProfile = opts.discoveryProfile ?? this.rules.discoveryProfile;
+    if (typeof discoveryProfile !== 'string' || !isKnownProfile(discoveryProfile)) {
+      throw new GameError('invalid_discovery_profile', `Profil de découvertes inconnu « ${String(discoveryProfile)} ».`);
+    }
+    const plan = buildDiscoveryPlan(discoveryProfile, cubeSize);
+    if (!plan.ok) {
+      throw new GameError(
+        'invalid_discovery_profile',
+        `Saison non créée : ${plan.error}. Choisissez un cube plus grand, un profil adapté, ou « none » pour une saison sans découverte.`,
+      );
     }
     const season = this.store.createSeason({
       name: opts.name?.trim() || `Saison ${count + 1}`,
@@ -586,7 +596,8 @@ export class GameEngine {
       endsAt: now + durationMs,
     });
     this.nextSeasonAt = null;
-    this.loadSeason(season, opts.discoveryProfile);
+    this.loadSeason(season, discoveryProfile);
+    this.seasonStartError = null;
     this.emit({ type: 'seasonStarted', seasonId: season.id });
     return season;
   }
@@ -645,7 +656,17 @@ export class GameEngine {
     }
     if (!this.state && this.rules.autoStartSeason) {
       if (this.nextSeasonAt === null) this.nextSeasonAt = now;
-      if (now >= this.nextSeasonAt) this.startSeason();
+      if (now >= this.nextSeasonAt) {
+        try {
+          this.startSeason();
+        } catch (err) {
+          // Configuration refusée (ex. profil de découvertes incompatible) : le serveur reste
+          // en ligne, l'erreur est exposée (/api/health) et journalisée une fois.
+          if (!(err instanceof GameError)) throw err;
+          if (this.seasonStartError !== err.message) console.error(`[the-last-block] démarrage de saison refusé : ${err.message}`);
+          this.seasonStartError = err.message;
+        }
+      }
     }
     this.limiter.prune(now);
     this.joinFailures.prune(now);

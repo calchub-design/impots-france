@@ -86,7 +86,7 @@ export function createHttpHandler({ config, engine, stats }: HttpDeps) {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
     try {
-      if (path === '/api/health') return json(res, 200, { ok: true, time: engine.now() });
+      if (path === '/api/health') return json(res, 200, { ok: true, time: engine.now(), ...(engine.seasonStartError ? { seasonStartError: engine.seasonStartError } : {}) });
 
       if (path === '/api/config' && req.method === 'GET') {
         return json(res, 200, {
@@ -150,7 +150,6 @@ export function createHttpHandler({ config, engine, stats }: HttpDeps) {
             hpPerLayer: typeof body.hpPerLayer === 'number' ? body.hpPerLayer : undefined,
             discoveryProfile: typeof body.discoveryProfile === 'string' ? body.discoveryProfile : undefined,
           });
-          // Le journal signale un profil de découvertes incompatible avec ce cube (invalidProfile).
           return json(res, 200, { season: engine.seasonInfo(s), discoveries: engine.discoveryLog(s.id) });
         }
         if (path === '/api/admin/season/end') {

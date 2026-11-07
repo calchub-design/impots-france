@@ -19,7 +19,7 @@ const config = loadConfig();
 {
   // Profil de découvertes incompatible avec la taille du cube : signalé dès le démarrage.
   const plan = buildDiscoveryPlan(config.rules.discoveryProfile, config.rules.cubeSize);
-  if (!plan.ok) console.warn(`[the-last-block] ATTENTION découvertes : ${plan.error}. Les saisons démarreront sans découverte (choisir DISCOVERY_PROFILE adapté ou « none »).`);
+  if (!plan.ok) console.warn(`[the-last-block] ATTENTION découvertes : ${plan.error}. Aucune saison ne pourra être créée avec ce réglage (choisir CUBE_SIZE ou DISCOVERY_PROFILE adapté, ou « none » pour une saison sans découverte).`);
 }
 const server = await startGameServer({ config });
 console.log(`[the-last-block] serveur prêt sur http://${config.host}:${server.port} (ws: /ws, db: ${config.dbPath})`);

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES } from '../server/config.js';
 import { SqliteStore } from '../server/db/sqlite.js';
 import { GameEngine } from '../server/game/engine.js';
-import { tempDbPath } from './helpers.js';
+import { tempDbPath, NO_DISCOVERIES } from './helpers.js';
 
 describe('migration de schéma v1 → v2', () => {
   it('ajoute les clés de pseudo, conserve les données et tolère les homonymes historiques', () => {
@@ -26,7 +26,7 @@ describe('migration de schéma v1 → v2', () => {
       v1.close();
 
       const store = new SqliteStore(db.path);
-      const engine = new GameEngine(store, { ...DEFAULT_RULES, autoStartSeason: false });
+      const engine = new GameEngine(store, { ...DEFAULT_RULES, autoStartSeason: false, ...NO_DISCOVERIES });
       const check = new DatabaseSync(db.path);
       expect(check.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()).toEqual({ value: '2' });
       const rows = check.prepare('SELECT id, name, name_key FROM players ORDER BY id').all();

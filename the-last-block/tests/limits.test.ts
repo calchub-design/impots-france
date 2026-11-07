@@ -4,7 +4,7 @@ import { SqliteStore } from '../server/db/sqlite.js';
 import { GameEngine } from '../server/game/engine.js';
 import { activeCredit } from '../server/game/playtime.js';
 import { startGameServer, type GameServer } from '../server/net/gameServer.js';
-import { aid, FakeClock, makeEngine, newPlayer, tempDbPath } from './helpers.js';
+import { aid, FakeClock, makeEngine, newPlayer, tempDbPath, NO_DISCOVERIES } from './helpers.js';
 import { TestClient } from './wsClient.js';
 
 const H = 3600_000;
@@ -115,7 +115,7 @@ describe('temps actif : modèle « réunion des fenêtres »', () => {
     const db = tempDbPath();
     try {
       const clock = new FakeClock(Date.UTC(2026, 0, 15, 10));
-      const rules: GameRules = { ...DEFAULT_RULES, autoStartSeason: false, cubeSize: 4, baseHp: 1e6, dailyActiveLimitMs: 60_000 };
+      const rules: GameRules = { ...DEFAULT_RULES, ...NO_DISCOVERIES, autoStartSeason: false, cubeSize: 4, baseHp: 1e6, dailyActiveLimitMs: 60_000 };
       const s1 = new SqliteStore(db.path);
       const e1 = new GameEngine(s1, rules, { now: clock.now });
       e1.startSeason();
@@ -155,7 +155,7 @@ describe('limites via WebSocket : reconnexions et sessions multiples', () => {
       path = db.path;
     }
     const config = loadConfig({ PORT: '0', HOST: '127.0.0.1', DB_PATH: path, STATIC_DIR: '/nonexistent' });
-    config.rules = { ...config.rules, autoStartSeason: false, cubeSize: 4, baseHp: 1e6, ...rules };
+    config.rules = { ...config.rules, autoStartSeason: false, ...NO_DISCOVERIES, cubeSize: 4, baseHp: 1e6, ...rules };
     server = await startGameServer({ config, manualTick: true, now: clock.now });
     if (!server.engine.activeSeason) server.engine.startSeason();
     return { server, path };

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig, type GameRules } from '../server/config.js';
 import { startGameServer, type GameServer } from '../server/net/gameServer.js';
 import type { DeltaMessage, LayerMessage, ServerMessage } from '../shared/protocol.js';
-import { tempDbPath } from './helpers.js';
+import { tempDbPath, NO_DISCOVERIES } from './helpers.js';
 import { TestClient } from './wsClient.js';
 
 let server: GameServer | null = null;
@@ -13,7 +13,7 @@ async function boot(rules: Partial<GameRules> = {}, env: Record<string, string> 
   const db = tempDbPath();
   cleanup = db.cleanup;
   const config = loadConfig({ PORT: '0', HOST: '127.0.0.1', DB_PATH: db.path, STATIC_DIR: '/nonexistent', ...env });
-  config.rules = { ...config.rules, autoStartSeason: false, ...rules };
+  config.rules = { ...config.rules, autoStartSeason: false, ...NO_DISCOVERIES, ...rules };
   server = await startGameServer({ config, manualTick: true });
   server.engine.startSeason();
   return server;

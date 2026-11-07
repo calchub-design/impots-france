@@ -232,15 +232,13 @@ describe('découvertes : révélation par le moteur', () => {
     expect(engine.discoveryLog()!.fragments[0].revealedAt).not.toBe(engine.discoveryLog(s1.id)!.fragments[0].revealedAt);
   });
 
-  it('profil incompatible : la saison démarre sans découverte et le signale ; demandé explicitement, il est refusé', () => {
+  it('profil incompatible : création de saison refusée avec explication (configuration ou administration)', () => {
     const { engine } = makeEngine({ ...SMALL, cubeSize: 4 });
-    engine.startSeason();
-    const log = engine.discoveryLog()!;
-    expect(log.fragments).toEqual([]);
-    expect(log.invalidProfile).toMatch(/4 couche/);
-    engine.endSeason('admin');
+    expect(() => engine.startSeason()).toThrow(/Saison non créée.*4 couche.*« none »/);
+    expect(engine.activeSeason).toBeNull();
     expect(() => engine.startSeason({ discoveryProfile: 'standard' })).toThrow(/incompatible/);
     expect(() => engine.startSeason({ discoveryProfile: 'inconnu' })).toThrow(/inconnu/);
+    // Profil adapté ou saison sans découverte explicite : acceptés.
     engine.startSeason({ discoveryProfile: 'mini-48h' });
     expect(engine.discoveryLog()!.fragments.map((f) => [f.id, f.layer])).toEqual([
       ['echo', 1],
@@ -248,6 +246,30 @@ describe('découvertes : révélation par le moteur', () => {
       ['warning', 3],
       ['final-transmission', 4],
     ]);
+    engine.endSeason('admin');
+    engine.startSeason({ discoveryProfile: 'none' });
+    expect(engine.discoveryLog()).toMatchObject({ profile: 'none', fragments: [] });
+  });
+
+  it('démarrage automatique refusé : le moteur ne plante pas, l\'erreur est exposée, puis tout repart une fois corrigé', () => {
+    const { engine, clock } = makeEngine({ ...SMALL, cubeSize: 4, autoStartSeason: true });
+    const errors: unknown[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => errors.push(a);
+    try {
+      expect(() => engine.tick()).not.toThrow();
+      clock.advance(1000);
+      engine.tick();
+    } finally {
+      console.error = orig;
+    }
+    expect(engine.activeSeason).toBeNull();
+    expect(engine.seasonStartError).toMatch(/Saison non créée/);
+    expect(errors).toHaveLength(1); // journalisée une seule fois
+    (engine.rules as { discoveryProfile: string }).discoveryProfile = 'mini-48h';
+    engine.tick();
+    expect(engine.activeSeason).not.toBeNull();
+    expect(engine.seasonStartError).toBeNull();
   });
 
   it('profil « none » : aucune découverte, aucun signalement', () => {
@@ -361,6 +383,23 @@ describe('découvertes : WebSocket (diffusion, reconnexion, nouveau joueur)', ()
     clients.push(c);
     return c;
   }
+
+  it('configuration incompatible : le serveur démarre quand même et /api/health explique le refus', async () => {
+    const db = tempDbPath();
+    cleanup = db.cleanup;
+    const config = loadConfig({ PORT: '0', HOST: '127.0.0.1', DB_PATH: db.path, STATIC_DIR: '/nonexistent', CUBE_SIZE: '4' });
+    const orig = console.error;
+    console.error = () => {};
+    try {
+      server = await startGameServer({ config, manualTick: true });
+    } finally {
+      console.error = orig;
+    }
+    const health = await (await fetch(`http://127.0.0.1:${server.port}/api/health`)).json();
+    expect(health.ok).toBe(true);
+    expect(health.seasonStartError).toMatch(/standard.*4 couche/);
+    expect(server.engine.activeSeason).toBeNull();
+  });
 
   it('les deux joueurs reçoivent la même découverte ; reconnexion et nouveau joueur retrouvent le même historique', async () => {
     await boot();

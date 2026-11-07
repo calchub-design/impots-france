@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../server/config.js';
 import { startGameServer, type GameServer } from '../server/net/gameServer.js';
 import { PRESENCE_WINDOW_MS, type ServerMessage } from '../shared/protocol.js';
-import { aid, makeEngine, newPlayer, tempDbPath } from './helpers.js';
+import { aid, makeEngine, newPlayer, tempDbPath, NO_DISCOVERIES } from './helpers.js';
 import { TestClient } from './wsClient.js';
 
 describe('présence observée (moteur)', () => {
@@ -80,7 +80,7 @@ describe('présence via WebSocket', () => {
     const db = tempDbPath();
     cleanup = db.cleanup;
     const config = loadConfig({ PORT: '0', HOST: '127.0.0.1', DB_PATH: db.path, STATIC_DIR: '/nonexistent' });
-    config.rules = { ...config.rules, autoStartSeason: false, cubeSize: 8, baseHp: 50 };
+    config.rules = { ...config.rules, autoStartSeason: false, ...NO_DISCOVERIES, cubeSize: 8, baseHp: 50 };
     server = await startGameServer({ config, manualTick: true });
     server.engine.startSeason();
     const a = new TestClient(`ws://127.0.0.1:${server.port}/ws`);

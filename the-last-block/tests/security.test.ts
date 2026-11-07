@@ -9,7 +9,7 @@ import { loadConfig, type GameRules } from '../server/config.js';
 import { startGameServer, type GameServer } from '../server/net/gameServer.js';
 import { clientIp } from '../server/net/ip.js';
 import { CLOSE_CODES, type ServerMessage } from '../shared/protocol.js';
-import { tempDbPath } from './helpers.js';
+import { tempDbPath, NO_DISCOVERIES } from './helpers.js';
 import { TestClient } from './wsClient.js';
 
 let server: GameServer | null = null;
@@ -21,7 +21,7 @@ async function boot(rules: Partial<GameRules> = {}, env: Record<string, string> 
   const db = tempDbPath();
   cleanups.push(db.cleanup);
   const config = loadConfig({ PORT: '0', HOST: '127.0.0.1', DB_PATH: db.path, STATIC_DIR: '/nonexistent', ...env });
-  config.rules = { ...config.rules, autoStartSeason: false, cubeSize: 3, baseHp: 50, ...rules };
+  config.rules = { ...config.rules, autoStartSeason: false, ...NO_DISCOVERIES, cubeSize: 3, baseHp: 50, ...rules };
   server = await startGameServer({ config, manualTick: true });
   server.engine.startSeason();
   return server;

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SqliteStore } from '../server/db/sqlite.js';
 import { GameEngine } from '../server/game/engine.js';
 import { DEFAULT_RULES } from '../server/config.js';
-import { aid, makeEngine, newPlayer, tempDbPath } from './helpers.js';
+import { aid, makeEngine, newPlayer, tempDbPath, NO_DISCOVERIES } from './helpers.js';
 
 describe('minage : règles de base', () => {
   it('applique un coup valide et retire un PV', () => {
@@ -184,7 +184,7 @@ describe('persistance et reprise', () => {
   it('reprend l\'état du cube, les contributions et la déduplication après redémarrage', () => {
     const db = tempDbPath();
     try {
-      const rules = { ...DEFAULT_RULES, cubeSize: 2, baseHp: 2, autoStartSeason: false };
+      const rules = { ...DEFAULT_RULES, ...NO_DISCOVERIES, cubeSize: 2, baseHp: 2, autoStartSeason: false };
       const s1 = new SqliteStore(db.path);
       let t = Date.UTC(2026, 0, 1);
       const e1 = new GameEngine(s1, rules, { now: () => t });

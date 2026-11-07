@@ -13,7 +13,7 @@ Ce document décrit ce qui a été livré, comment cela fonctionne, comment c'es
 | 3 | Repères 10/25/45/65/85 % puis dernière couche ; couches strictement croissantes ; figées pour la saison | Calcul unique au démarrage de la saison (`planDiscoveryLayers`), enregistré en base avec les titres et les textes. Une modification ultérieure de la configuration ne touche pas la saison en cours. |
 | 3 | Révélation à la destruction **complète** de la couche, validée par le serveur | Le même enregistrement en base inscrit le coup qui achève la couche et la révélation du fragment. |
 | 3 | Fin de saison avant la fin du cube | Les fragments non découverts restent verrouillés, y compris dans les archives. |
-| 3 | Moins de couches que de fragments | Jamais deux fragments sur une même couche. Si le profil est demandé explicitement (administration), il est refusé. Si c'est le profil par défaut, la saison démarre **sans découverte** et l'anomalie est signalée au démarrage du serveur et dans les archives. |
+| 3 | Moins de couches que de fragments | Jamais deux fragments sur une même couche. **La création de la saison est refusée**, avec une explication : réponse 400 de l'administration, ou erreur exposée par `/api/health` et journalisée une fois pour le démarrage automatique. Le serveur, lui, démarre toujours. Une saison sans découverte se configure explicitement avec le profil `none`. *(Décision de validation du 7 novembre.)* |
 | 4 | Indices à 80 % et 95 % de la couche, sans rien dévoiler | « Anomalie détectée » puis « Signal presque accessible », calculés sur l'état confirmé de la couche. Le navigateur ne reçoit ni titre ni texte avant la révélation. |
 | 4 | Enregistrement définitif, diffusion, animation, titre et message, archives | Oui. L'animation est courte, ne bloque pas le jeu et respecte les animations réduites. |
 | 4 | Joueurs connectés après la révélation | Même historique, mêmes dates. Un joueur qui était absent voit l'annonce une fois à son retour. Un nouveau joueur trouve tout dans les archives. |
@@ -74,7 +74,9 @@ Coup accepté (mine)            ── limites inchangées : 5 coups/s, 4 h/jour
   - une modification s'applique aux saisons qui démarrent ensuite, après recompilation et redémarrage ;
   - le fichier est copié dans `dist/` par `npm run build`.
 - `DISCOVERY_PROFILE` : `standard` (par défaut), `mini-48h` ou `none`. Un nom inconnu empêche le serveur de démarrer.
-- Administration : `POST /api/admin/season/start` accepte `discoveryProfile`. La réponse contient le journal de la nouvelle saison, où `invalidProfile` signale un profil inadapté.
+- Administration : `POST /api/admin/season/start` accepte `discoveryProfile`. Un profil incompatible avec le cube donne une réponse 400 qui explique l'erreur, et aucune saison n'est créée.
+- Démarrage automatique refusé pour la même raison : le serveur reste en ligne, `GET /api/health` renvoie `seasonStartError`, et la création repart dès que la configuration est corrigée.
+- `invalidProfile` ne subsiste que pour une saison créée **avant** les découvertes sur un cube trop petit, qu'on ne peut plus refuser.
 
 ### Interface
 
@@ -142,10 +144,10 @@ Chromium sans affichage, rendu logiciel, émulation iPhone 13. **Aucune mesure s
 
 ## Limites restantes
 
-- **Profil inadapté au cube par défaut** : la saison démarre sans découverte, avec un avertissement au démarrage du serveur et dans les archives. C'est un choix délibéré : une erreur de configuration ne doit pas empêcher toute partie. On peut à la place rendre ce cas bloquant.
-- **Arrondi des repères** : sur 32 couches, le fragment 01 arrive à la couche 3, soit 9,4 % au lieu de 10 %. Les autres écarts sont inférieurs à une couche.
+- **Profil inadapté au cube** : la création de saison est refusée avec une explication, sans empêcher le serveur de démarrer (décision de validation). Les tests qui utilisent de petits cubes déclarent désormais explicitement `discoveryProfile: 'none'`.
+- **Arrondi des repères** (conservé après validation) : sur 32 couches, le fragment 01 arrive à la couche 3, soit 9,4 % au lieu de 10 %. Les autres écarts sont inférieurs à une couche.
 - **Seuils des indices** : ils se comptent en blocs détruits de la couche, pas en points de vie.
-- **Annonce « pendant votre absence »** : mémorisée par navigateur, pas par compte. Un joueur qui utilise deux appareils la verra une fois sur chacun.
+- **Annonce « pendant votre absence »** (conservée pour la bêta) : mémorisée par navigateur, pas par compte. Un joueur qui utilise deux appareils la verra une fois sur chacun.
 - **Textes figés par saison** : une correction du texte d'un fragment ne s'applique qu'aux saisons suivantes. C'est voulu : les archives ne changent pas après coup.
 - **Animation hors de la scène 3D** : elle est posée au-dessus de la scène, pas dans le cube. C'est voulu pour fonctionner pareil avec le rendu classique, sans coût de dessin.
 - **Performances** : mesurées en émulation uniquement.

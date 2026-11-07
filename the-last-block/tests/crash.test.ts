@@ -5,7 +5,7 @@ import { DEFAULT_RULES } from '../server/config.js';
 import { SqliteStore } from '../server/db/sqlite.js';
 import { GameEngine } from '../server/game/engine.js';
 import type { MineResultMessage } from '../shared/protocol.js';
-import { tempDbPath } from './helpers.js';
+import { tempDbPath, NO_DISCOVERIES } from './helpers.js';
 import { TestClient } from './wsClient.js';
 
 /**
@@ -31,6 +31,8 @@ async function startProcess(dbPath: string, env: Record<string, string> = {}): P
       DB_PATH: dbPath,
       STATIC_DIR: '/nonexistent',
       CUBE_SIZE: '3',
+      // Cube de 3 couches : saison sans découverte, configurée explicitement.
+      DISCOVERY_PROFILE: 'none',
       BLOCK_BASE_HP: '4',
       BLOCK_HP_PER_LAYER: '2',
       MAX_CONNECTIONS_PER_IP: '1000',
@@ -253,7 +255,7 @@ describe('fenêtres de crash entre deux transactions', () => {
       st.close(); // « crash » : endSeason n'a jamais été exécuté
 
       const st2 = new SqliteStore(db.path);
-      const engine = new GameEngine(st2, { ...DEFAULT_RULES, autoStartSeason: false }, { now: () => 99_000 });
+      const engine = new GameEngine(st2, { ...DEFAULT_RULES, autoStartSeason: false, ...NO_DISCOVERIES }, { now: () => 99_000 });
       expect(engine.activeSeason).toBeNull();
       const s = st2.getSeason(season.id)!;
       expect(s).toMatchObject({ status: 'ended', end_reason: 'completed', final_stone_player_id: 'p2', ended_at: 2000 });
@@ -271,7 +273,7 @@ describe('fenêtres de crash entre deux transactions', () => {
     const db = tempDbPath();
     try {
       let t = 1_000_000;
-      const rules = { ...DEFAULT_RULES, cubeSize: 2, autoStartSeason: true, seasonCooldownMs: 3600_000 };
+      const rules = { ...DEFAULT_RULES, ...NO_DISCOVERIES, cubeSize: 2, autoStartSeason: true, seasonCooldownMs: 3600_000 };
       const s1 = new SqliteStore(db.path);
       const e1 = new GameEngine(s1, rules, { now: () => t });
       e1.tick();
@@ -296,7 +298,7 @@ describe('fenêtres de crash entre deux transactions', () => {
     const db = tempDbPath();
     try {
       let t = 0;
-      const rules = { ...DEFAULT_RULES, cubeSize: 2, autoStartSeason: false, seasonDurationMs: 3600_000 };
+      const rules = { ...DEFAULT_RULES, ...NO_DISCOVERIES, cubeSize: 2, autoStartSeason: false, seasonDurationMs: 3600_000 };
       const s1 = new SqliteStore(db.path);
       new GameEngine(s1, rules, { now: () => t }).startSeason();
       s1.close();
