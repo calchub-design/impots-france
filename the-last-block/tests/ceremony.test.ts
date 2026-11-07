@@ -297,3 +297,86 @@ describe('cérémonie : WebSocket et HTTP', () => {
     expect(again.status).toBe(400);
   }, 20_000);
 });
+
+describe('brigade championne : règle de qualification de production (5 membres)', () => {
+  /** Règles de production pour la qualification : rien n'est abaissé ici. */
+  const PROD = { ...RULES, baseHp: 100_000, brigadeMinSize: DEFAULT_RULES.brigadeMinSize };
+
+  function brigade(engine: GameEngine, name: string, size: number) {
+    const ids = Array.from({ length: size }, (_, i) => newPlayer(engine, `${name.slice(0, 6)}-${i}`));
+    const info = engine.createBrigade(ids[0], name);
+    for (const id of ids.slice(1)) engine.joinBrigade(id, info.inviteCode);
+    return { ids, id: info.id, code: info.inviteCode };
+  }
+  function mine(engine: GameEngine, clock: FakeClock, ids: string[], hitsEach: number) {
+    for (let i = 0; i < hitsEach; i++) {
+      for (const id of ids) {
+        clock.advance(5);
+        expect(engine.mine(id, { actionId: aid('q'), layer: 0, block: i % 16 }).ok).toBe(true);
+      }
+    }
+  }
+
+  it('production : seuil de 5 membres (configuration par défaut, moteur, .env.example)', () => {
+    expect(DEFAULT_RULES.brigadeMinSize).toBe(5);
+    expect(loadConfig({}).rules.brigadeMinSize).toBe(5);
+  });
+
+  it('brigades de 2 et 4 membres non qualifiées, même avec bien plus de coups ; brigade de 5 qualifiée', () => {
+    const { engine, clock } = makeEngine(PROD);
+    engine.startSeason();
+    const deux = brigade(engine, 'Duo', 2);
+    const quatre = brigade(engine, 'Quatuor', 4);
+    const cinq = brigade(engine, 'Quintette', 5);
+    mine(engine, clock, deux.ids, 30); // 60 coups
+    mine(engine, clock, quatre.ids, 20); // 80 coups
+    mine(engine, clock, cinq.ids, 2); // 10 coups
+    const board = engine.brigadeBoard();
+    expect(board.map((b) => [b.name, b.members, b.eligible, b.hits])).toEqual([
+      ['Quatuor', 4, false, 80],
+      ['Duo', 2, false, 60],
+      ['Quintette', 5, true, 10],
+    ]);
+    expect(engine.brigadeInfo(deux.ids[0])!.minSize).toBe(5);
+    engine.endSeason('admin');
+    const arc = engine.lastArchive()!;
+    expect(arc.championBrigade).toMatchObject({ name: 'Quintette', members: 5, hits: 10 });
+    expect(arc.brigadeMinSize).toBe(5);
+  });
+
+  it('saison sans brigade qualifiée : aucune brigade championne', () => {
+    const { engine, clock } = makeEngine(PROD);
+    engine.startSeason();
+    const b2 = brigade(engine, 'Duo', 2);
+    const b4 = brigade(engine, 'Quatuor', 4);
+    mine(engine, clock, [...b2.ids, ...b4.ids], 3);
+    engine.endSeason('admin');
+    expect(engine.lastArchive()).toMatchObject({ championBrigade: null, brigadeMinSize: 5 });
+  });
+
+  it('départ d\'un membre avant la clôture : la brigade retombe à 4 et perd sa qualification', () => {
+    const { engine, clock } = makeEngine(PROD);
+    engine.startSeason();
+    const a = brigade(engine, 'Alpha', 5);
+    const b = brigade(engine, 'Beta', 5);
+    mine(engine, clock, a.ids, 10); // Alpha en tête
+    mine(engine, clock, b.ids, 2);
+    engine.leaveBrigade(a.ids[4]); // départ juste avant la clôture
+    expect(engine.brigadeBoard().find((x) => x.name === 'Alpha')).toMatchObject({ members: 4, eligible: false });
+    engine.endSeason('admin');
+    // Les coups d'Alpha restent les siens (objectifs, classement des brigades), mais le titre exige 5 membres À LA CLÔTURE.
+    expect(engine.lastArchive()!.championBrigade).toMatchObject({ name: 'Beta', members: 5 });
+  });
+
+  it('l\'archive conserve le nombre de membres constaté à la clôture, malgré les départs ultérieurs', () => {
+    const { engine, clock } = makeEngine(PROD);
+    const s = engine.startSeason();
+    const a = brigade(engine, 'Alpha', 6);
+    mine(engine, clock, a.ids, 2);
+    engine.endSeason('admin');
+    for (const id of a.ids.slice(3)) engine.leaveBrigade(id);
+    expect(engine.brigadeBoard()[0].members).toBe(3);
+    expect(engine.seasonArchive(s.id)!.championBrigade).toMatchObject({ name: 'Alpha', members: 6 });
+    expect(engine.hall()[0].championBrigade!.members).toBe(6);
+  });
+});

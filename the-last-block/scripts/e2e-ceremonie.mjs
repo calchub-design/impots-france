@@ -5,9 +5,11 @@
 //
 //   npm run build && node scripts/e2e-ceremonie.mjs [--rendu monolithe|classique] [--out ./e2e-output] [--cpu 4]
 //
-// Saison 1 : cube de 4 couches de 4 × 4 blocs à 1 PV, quatre fragments (mini-48h),
-// brigade championne dès 2 membres ; des robots WebSocket préparent le cube et le
-// téléphone détruit le dernier bloc. Saison 2 : ouverte puis clôturée par
+// Saison 1 : cube de 4 couches de 4 × 4 blocs à 1 PV, quatre fragments (mini-48h).
+// Règle de qualification de PRODUCTION (5 membres, valeur par défaut, non modifiée) :
+// « Les Foreurs » (téléphone + ordinateur + 3 robots = 5 membres) et « Les Taupes »
+// (4 robots, plus de coups mais non qualifiée). Des robots WebSocket préparent le
+// cube et le téléphone détruit le dernier bloc. Saison 2 : ouverte puis clôturée par
 // l'administration sans aucun coup.
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -70,7 +72,6 @@ const server = await new Promise((resolveStart, reject) => {
       BLOCK_BASE_HP: '1',
       BLOCK_HP_PER_LAYER: '0',
       DISCOVERY_PROFILE: 'mini-48h',
-      BRIGADE_MIN_SIZE: '2',
       SEASON_DURATION_HOURS: '720',
       SEASON_COOLDOWN_SECONDS: '3600',
       ADMIN_TOKEN: ADMIN,
@@ -89,6 +90,7 @@ async function bot(name) {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   const waiters = new Map();
   let cube;
+  let brigade = null;
   await new Promise((r, j) => {
     ws.once('open', r);
     ws.once('error', j);
@@ -101,6 +103,7 @@ async function bot(name) {
         r();
       }
       if (m.t === 'layer') cube = m.cube;
+      if (m.t === 'brigade') brigade = m.brigade;
       if (m.t === 'delta') for (const [l, b, hp] of m.updates) if (cube && l === cube.currentLayer) cube.currentHp[b] = hp;
       if (m.t === 'mineResult') {
         waiters.get(m.actionId)?.(m);
@@ -110,7 +113,19 @@ async function bot(name) {
     });
     ws.send(JSON.stringify({ t: 'hello', v: 1, name }));
   });
+  const waitBrigade = async () => {
+    for (let i = 0; i < 50 && !brigade; i++) await sleep(50);
+    return brigade;
+  };
   return {
+    async createBrigade(n) {
+      ws.send(JSON.stringify({ t: 'brigadeCreate', name: n }));
+      return (await waitBrigade()).inviteCode;
+    },
+    async joinBrigade(code) {
+      ws.send(JSON.stringify({ t: 'brigadeJoin', code }));
+      return waitBrigade();
+    },
     async mineUntil(keep, offset) {
       for (;;) {
         if (!cube) return;
@@ -176,7 +191,7 @@ try {
     await ready(p);
   }
 
-  // 1. Brigade de 2 (qualifiée ici dès 2 membres) : créée sur le téléphone, rejointe par l'ordinateur.
+  // 1. « Les Foreurs » : créée sur le téléphone, rejointe par l'ordinateur (puis par 3 robots).
   await A.tap('#menu-btn');
   await A.tap('.tabs button[data-tab="brigade"]');
   await A.fill('#brigade-create input[name="name"]', 'Les Foreurs');
@@ -195,11 +210,31 @@ try {
   });
   await B.click('#mine-btn');
   await B.waitForFunction(() => window.tlb.state.me.hits === 1, null, { timeout: 5000 });
-  for (const n of ['Robot-Un', 'Robot-Deux', 'Robot-Trois']) bots.push(await bot(n));
-  // Les robots s'arrêtent avec une marge (ils minent en parallèle), puis un seul descend au dernier bloc.
-  await Promise.all(bots.map((b, i) => b.mineUntil(6, i)));
+  const foreurs = [];
+  for (const n of ['Robot-Un', 'Robot-Deux', 'Robot-Trois']) {
+    const b = await bot(n);
+    await b.joinBrigade(code);
+    foreurs.push(b);
+  }
+  const taupes = [];
+  for (const n of ['Taupe-1', 'Taupe-2', 'Taupe-3', 'Taupe-4']) taupes.push(await bot(n));
+  const taupesCode = await taupes[0].createBrigade('Les Taupes');
+  for (const t of taupes.slice(1)) await t.joinBrigade(taupesCode);
+  bots.push(...foreurs, ...taupes);
+  await B.waitForFunction(() => window.tlb.state.brigade?.members.length === 5, null, { timeout: 5000 });
+  // Les Taupes (4 membres) minent davantage, puis les robots des Foreurs ; un seul descend au dernier bloc.
+  await Promise.all(taupes.map((b, i) => b.mineUntil(28, i)));
+  await Promise.all(foreurs.map((b, i) => b.mineUntil(6, i)));
   await sleep(400);
-  await bots[0].mineUntil(1, 0);
+  await foreurs[0].mineUntil(1, 0);
+  const boardBefore = await B.evaluate(() => window.tlb.state.brigades.map((b) => ({ name: b.name, members: b.members, eligible: b.eligible, hits: b.hits })));
+  // Notifications : enregistrées avec l'état de la cérémonie au moment où elles apparaissent.
+  await A.evaluate(() => {
+    window.__toasts = [];
+    new MutationObserver((ms) =>
+      ms.forEach((m) => m.addedNodes.forEach((n) => window.__toasts.push({ text: n.textContent, during: !document.querySelector('#ceremony').hidden }))),
+    ).observe(document.querySelector('#toasts'), { childList: true });
+  });
   await A.waitForFunction(() => {
     const c = window.tlb.state.cube;
     return c && c.currentLayer === c.size - 1 && c.layerRemaining[c.currentLayer] === 1;
@@ -245,6 +280,20 @@ try {
   await A.screenshot({ path: join(OUT, `ceremonie-a-silence-mobile-${RENDU}.png`) });
   const arc = await B.evaluate(() => fetch('/api/hall').then((r) => r.json()).then((d) => d.seasons[0]));
   check('archive : champion, brigade championne, Pierre finale, 4 fragments', !!arc.champion && arc.championBrigade?.name === 'Les Foreurs' && !!arc.finalStone && arc.discoveries.length === 4, `${arc.champion?.name} · ${arc.finalStone?.name}`);
+  const taupesB = boardBefore.find((b) => b.name === 'Les Taupes');
+  const foreursB = boardBefore.find((b) => b.name === 'Les Foreurs');
+  check(
+    'règle de production (5 membres) : « Les Taupes » (4 membres, plus de coups) non qualifiée ; « Les Foreurs » (5 membres) championne',
+    taupesB.members === 4 && !taupesB.eligible && taupesB.hits > foreursB.hits && foreursB.members === 5 && foreursB.eligible && arc.brigadeMinSize === 5 && arc.championBrigade.members === 5,
+    `Taupes ${taupesB.hits} coups / ${taupesB.members} membres · Foreurs ${foreursB.hits} coups / ${foreursB.members} membres`,
+  );
+  const toastsDuring = await A.evaluate(() => document.querySelectorAll('#toasts .toast').length);
+  check('aucune notification affichée par-dessus la cérémonie', toastsDuring === 0);
+  const line390 = await A.evaluate(() => {
+    const e = document.querySelector('.season-line');
+    return { text: e.textContent, fits: e.scrollWidth <= e.clientWidth + 1 };
+  });
+  check('intersaison : compte à rebours lisible en entier sur téléphone (390 px)', line390.fits && /Intersaison · reprise \d/.test(line390.text), line390.text);
   const stoneName = await A.evaluate(() => window.tlb.state.player.name);
   check('Pierre finale attribuée à l\'auteur du dernier bloc (le téléphone)', arc.finalStone.name === stoneName, stoneName);
   const R0 = await cer(R);
@@ -283,7 +332,7 @@ try {
   // 7. Téléphone : moments suivants avec « Suivant ».
   await nextStep(A, true);
   const sBrig = await cer(A);
-  check('séquence C : brigade championne (nom, emblème, contribution, membres)', sBrig.step === 'brigade' && sBrig.body.includes('Les Foreurs') && sBrig.body.includes('2 membres') && sBrig.body.includes(`${arc.championBrigade.hits} coups`), sBrig.body.replace(/\n/g, ' · '));
+  check('séquence C : brigade championne (nom, emblème, contribution, membres)', sBrig.step === 'brigade' && sBrig.body.includes('Les Foreurs') && sBrig.body.includes('5 membres') && sBrig.body.includes(`${arc.championBrigade.hits} coups`), sBrig.body.replace(/\n/g, ' · '));
   await A.screenshot({ path: join(OUT, `ceremonie-c-brigade-mobile-${RENDU}.png`) });
   await nextStep(A, true);
   const sStone = await cer(A);
@@ -321,6 +370,16 @@ try {
   check('« Revoir la cérémonie » : relancée depuis le début', replay.visible && replay.step === 'silence');
   await B.click('#cer-skip');
   check('revoir ne modifie rien (archive identique)', (await B.evaluate(() => fetch('/api/hall').then((r) => r.text()))) === hallBefore);
+
+  // Notifications retenues pendant la cérémonie : affichées après sa fermeture.
+  await A.waitForFunction(() => document.querySelector('#ceremony').hidden, null, { timeout: 45000 });
+  await sleep(300);
+  const seen = await A.evaluate(() => window.__toasts);
+  check(
+    'notification de mission reportée après la cérémonie, jamais pendant',
+    seen.length > 0 && seen.every((t) => !t.during) && seen.some((t) => t.text.includes('Mission accomplie')),
+    seen.map((t) => t.text).join(' | ').slice(0, 120),
+  );
 
   // 9. Joueur qui revient APRÈS la fin (la cérémonie dure 41 s) : résultats proposés une fois depuis le début.
   await A.waitForFunction(() => document.querySelector('#ceremony').hidden, null, { timeout: 45000 });
@@ -363,6 +422,20 @@ try {
   await B.screenshot({ path: join(OUT, `ceremonie-admin-bureau-${RENDU}.png`) });
   await B.click('#cer-skip');
   const hall2 = await B.evaluate(() => fetch('/api/hall').then((r) => r.json()));
+  const ctx360 = await bMobile.newContext({ viewport: { width: 360, height: 740 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  const P360 = await ctx360.newPage();
+  watch(P360, '360');
+  await P360.addInitScript(() => localStorage.setItem('tlb.ceremony.seen', '999'));
+  await P360.goto(`${BASE}/?${Q}&profil=ceremonie-360`);
+  await ready(P360);
+  await P360.evaluate(() => document.querySelector('#cer-skip')?.click());
+  await sleep(700);
+  const line360 = await P360.evaluate(() => {
+    const e = document.querySelector('.season-line');
+    return { text: e.textContent, fits: e.scrollWidth <= e.clientWidth + 1 };
+  });
+  check('intersaison : compte à rebours lisible en entier sur téléphone (360 px)', line360.fits, line360.text);
+  await P360.screenshot({ path: join(OUT, `intersaison-360-${RENDU}.png`) });
   check('Hall : deux saisons, la première inchangée', hall2.seasons.length === 2 && JSON.stringify(hall2.seasons[1]) === JSON.stringify(JSON.parse(hallBefore).seasons[0]));
   check('aucune erreur JavaScript', errors.length === 0, errors.slice(0, 3).join(' | '));
 } catch (e) {

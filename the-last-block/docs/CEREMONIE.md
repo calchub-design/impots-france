@@ -14,6 +14,31 @@
 | Fin de saison côté client | Un simple dialogue texte. | Remplacé par la cérémonie. L'ancien dialogue ne sert plus que de repli si l'archive manque. |
 | Don | `DONATION_*` existe déjà dans la configuration (association envisagée, note), sans montant ni transaction. | Réutilisé. Le montant reste « à confirmer » tant que l'administration ne l'a pas saisi. |
 
+## Vérification de la règle de qualification (brigade championne)
+
+Les premières captures montraient « Les Foreurs » championne avec 2 membres et 2 coups. **Ce n'était pas la règle de production** : le test navigateur de la cérémonie fixait `BRIGADE_MIN_SIZE=2`, un raccourci de test qui n'était pas signalé dans ce rapport. Le test et les captures utilisent désormais la règle de production.
+
+| Point vérifié | Constat |
+|---|---|
+| Seuil appliqué en production | **5 membres**, partout : `DEFAULT_RULES.brigadeMinSize`, valeur par défaut de `BRIGADE_MIN_SIZE` dans `loadConfig`, et `.env.example`. Testé. |
+| Test et production | Le seul écart venait de `scripts/e2e-ceremonie.mjs`, qui fixait `BRIGADE_MIN_SIZE=2`. Ce réglage est **supprimé** : le test tourne avec la valeur par défaut. Aucun autre test navigateur ne modifie ce seuil. Les tests unitaires qui l'abaissent le font explicitement et le vérifient. |
+| Règle complète | Est championne la brigade la mieux classée (coups, puis antériorité) qui compte **au moins 5 membres au moment de la clôture** et au moins un coup. C'est inchangé dans le moteur. |
+| Membres comptés | Les membres **présents à la clôture**, lus dans la même transaction. Ce nombre est **figé dans l'archive** : des départs ultérieurs ne le modifient pas (testé : 6 à la clôture, 3 ensuite, l'archive garde 6). |
+| Départs avant la clôture | Une brigade qui retombe sous 5 membres avant la clôture **perd sa qualification**. Ses coups restent les siens (classement des brigades, objectifs de brigade), mais le titre revient à la brigade qualifiée suivante, ou à aucune. Inversement, une brigade qui atteint 5 membres avant la clôture est qualifiée : c'est la règle existante. |
+| Anciens membres | Ils comptent pour l'objectif « Tous ensemble », par décision validée, mais **pas** pour l'éligibilité au titre, qui ne regarde que l'effectif à la clôture. |
+| Cohérence | Moteur (`brigadeBoard`, `endSeason`), archive (`brigadeMinSize`, `championBrigade.members`), cérémonie (moment C, ou « Aucune brigade qualifiée : le titre exige au moins 5 membres »), Hall des champions, onglet Brigade (« encore N pour être éligible au titre ») et classement des brigades (« en formation ») utilisent tous la même valeur, fournie par le serveur. |
+
+**Tests ajoutés**, tous avec la règle de production :
+- brigades de **2** et **4** membres non qualifiées, même avec bien plus de coups ;
+- brigade de **5** qualifiée ;
+- **départ** d'un membre avant la clôture : la brigade perd sa qualification au profit de la suivante ;
+- **saison sans brigade qualifiée** ;
+- **archive** conservant le nombre de membres de la clôture.
+
+Le test navigateur oppose aussi « Les Taupes » (4 membres, **plus** de coups, non qualifiée) à « Les Foreurs » (5 membres, championne).
+
+Le moteur était déjà correct : aucune modification de la règle n'a été nécessaire.
+
 ## Déclenchement et fiabilité
 
 | Exigence | Mise en œuvre |
@@ -72,7 +97,7 @@ L'onglet **Saisons** du menu présente une carte par saison terminée :
 
 ## Tests exécutés
 
-- `npm test` : **205 tests**, tous réussis. Il y en avait 192 ; 13 sont nouveaux.
+- `npm test` : **210 tests**, tous réussis. Il y en avait 192 avant la cérémonie : 13 ont été ajoutés avec la cérémonie, puis 5 pour la vérification de la qualification.
   - `tests/ceremony.test.ts` (12 tests) :
     - déroulé et synchronisation ;
     - **dernier bloc frappé par deux joueurs au même instant** (une seule clôture, une seule Pierre finale, archive unique, seconde clôture refusée) ;
@@ -87,9 +112,12 @@ L'onglet **Saisons** du menu présente une carte par saison terminée :
     - **archives après redémarrage** et fenêtre de crash ;
     - WebSocket et HTTP : mêmes résultats pour tous, **reconnexion pendant la cérémonie**, Hall, don, seconde clôture refusée.
   - `tests/crash.test.ts` (1 test) : **SIGKILL réel** juste après que deux joueurs frappent le dernier bloc. Après deux redémarrages successifs : une seule archive, une seule Pierre finale (l'auteur réel du dernier coup), un Hall identique, et la même archive envoyée à un nouveau joueur.
-- `npm run e2e:ceremonie -- --rendu monolithe` : **20/20**. `--rendu classique` : **20/20**. Le scénario :
+- `npm run e2e:ceremonie -- --rendu monolithe` : **25/25**. `--rendu classique` : **25/25**. Le scénario utilise la **règle de production** (5 membres) :
   - un téléphone, un ordinateur et un navigateur en animations réduites ;
+  - « Les Foreurs » (2 joueurs et 3 robots) face à « Les Taupes » (4 robots, plus de coups, non qualifiée) ;
   - le téléphone détruit le dernier bloc par l'interface ;
+  - aucune notification par-dessus la cérémonie ; la mission accomplie par le dernier coup s'affiche après ;
+  - compte à rebours de l'intersaison lisible en entier à 390 et 360 px ;
   - les six moments vérifiés un à un ;
   - même moment sur les deux navigateurs ;
   - connexion pendant la cérémonie ;
@@ -118,6 +146,12 @@ Chromium sans affichage, rendu logiciel, émulation iPhone 13, mesure pendant le
 - **Côté serveur** : la construction de l'archive ne s'exécute qu'une fois par saison, à la clôture (quelques requêtes indexées). Les coups ordinaires ne coûtent rien de plus.
 - **Taille du client** : 126,6 Ko de JavaScript (41,9 Ko compressés), sans dépendance ajoutée.
 
+## Petites corrections d'interface
+
+- **Compte à rebours de l'intersaison** : la barre du haut affiche une forme courte (« Intersaison · reprise 59 min »), qui tient sur une ligne à 360 px. La phrase complète reste en info-bulle, et le panneau Saisons garde le détail.
+- **Notifications pendant la cérémonie** : elles sont retenues, puis affichées à la fermeture (les trois dernières). Une notification arrivée juste avant, comme une mission accomplie par le dernier coup, est retirée de l'écran et reportée de la même façon.
+- **Animations** : inchangées.
+
 ## Limites restantes
 
 - **Montant du don** : c'est un texte saisi par l'administration (« 500 € »). Aucun paiement n'est relié, et c'est voulu.
@@ -129,7 +163,7 @@ Chromium sans affichage, rendu logiciel, émulation iPhone 13, mesure pendant le
 
 ## Captures
 
-Elles proviennent du test navigateur : cube de démonstration de 4 couches, deux joueurs réels et trois robots.
+Elles proviennent du test navigateur, avec la règle de production (5 membres) : cube de démonstration de 4 couches, deux joueurs réels et sept robots.
 
 | Moment | Téléphone (monolithe) |
 |---|---|
@@ -151,4 +185,4 @@ Hall des champions :
 - [ordinateur](captures/ceremonie/hall-bureau-monolithe.png) ;
 - [ordinateur (classique)](captures/ceremonie/hall-bureau-classique.png).
 
-Animations réduites : [téléphone](captures/ceremonie/ceremonie-reduit-mobile-monolithe.png). Silence en rendu classique : [téléphone](captures/ceremonie/ceremonie-a-silence-mobile-classique.png).
+Intersaison à 360 px : [téléphone](captures/ceremonie/intersaison-360-monolithe.png). Animations réduites : [téléphone](captures/ceremonie/ceremonie-reduit-mobile-monolithe.png). Silence en rendu classique : [téléphone](captures/ceremonie/ceremonie-a-silence-mobile-classique.png).
