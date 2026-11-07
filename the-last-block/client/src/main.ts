@@ -17,6 +17,7 @@ import { PRESENCE_WINDOW_MS } from '../../shared/protocol.js';
 import { discoveryHint, HINT_LABELS, type DiscoveryLog } from '../../shared/discoveries.js';
 import { hintText, renderArchives, RevealOverlay, SeenFragments } from './discoveries.js';
 import { missionsDone, renderMissions, resetText } from './missions.js';
+import { renderBrigadeObjectives } from './brigade.js';
 import type { MissionHistoryDay, MissionsState } from '../../shared/missions.js';
 import { SKINS, skinById } from '../../shared/skins.js';
 import { GameSocket, type ConnState } from './net.js';
@@ -466,6 +467,11 @@ function updatePresenceUi() {
   $('#hud-presence').textContent = String(live.length);
   minimap.markers = [...groupByBlock(live, now).entries()].map(([idx, l]) => ({ idx, color: brigadeColor(l[0].brigadeName) }));
   ($('#brigade-go') as HTMLButtonElement).hidden = !state.brigade;
+  // Boutons « Rejoindre » des membres actifs (onglet Brigade) : suivent la présence réelle.
+  if (state.brigade) {
+    const active = new Set(activeMates().map((m) => m.playerId));
+    for (const btn of document.querySelectorAll<HTMLButtonElement>('#brigade-members .join-mate')) btn.hidden = !active.has(btn.dataset.player!);
+  }
 }
 // Les observations vieillissent : rafraîchissement discret une fois par seconde.
 setInterval(() => {
@@ -475,12 +481,19 @@ setInterval(() => {
   world.requestRender();
 }, 1000);
 
-function joinBrigade() {
-  if (!state.brigade || !face) return;
+/** Membres de ma brigade vus en train de miner récemment (présence réelle), du plus récent au plus ancien. */
+function activeMates() {
+  if (!state.brigade) return [];
   const now = performance.now();
-  const mates = presence.markers
+  return presence.markers
     .filter((m) => m.brigadeName === state.brigade!.name && m.playerId !== state.player?.id && presenceAge(m, now) <= PRESENCE_WINDOW_MS)
     .sort((a, b) => presenceAge(a, now) - presenceAge(b, now));
+}
+
+function joinBrigade(targetId?: string) {
+  if (!state.brigade || !face) return;
+  const now = performance.now();
+  const mates = activeMates().filter((m) => !targetId || m.playerId === targetId);
   if (mates.length === 0) {
     toast('Aucun membre de votre brigade n\'a miné dans les 20 dernières secondes : position inconnue.', 'info');
     return;
@@ -490,7 +503,7 @@ function joinBrigade() {
   world.requestRender();
   toast(`Vous rejoignez ${mates[0].name} (vu il y a ${Math.round(presenceAge(mates[0], now) / 1000)} s).`, 'good');
 }
-$('#brigade-go').addEventListener('click', joinBrigade);
+$('#brigade-go').addEventListener('click', () => joinBrigade());
 
 function syncWorld() {
   updateBillboard();
@@ -821,6 +834,7 @@ function onMessage(msg: ServerMessage) {
       state.brigade = msg.brigade;
       renderBrigade();
       updatePresenceUi();
+      for (const label of msg.unlocked ?? []) toast(`◈ Distinction de brigade : ${label}`, 'good');
       break;
     case 'error':
       toast(msg.message, 'bad');
@@ -1173,20 +1187,35 @@ function renderBrigade() {
   $('#brigade-status').textContent =
     n < b.minSize ? `${n}/${b.maxSize} membres — encore ${b.minSize - n} pour être éligible au titre.` : `${n}/${b.maxSize} membres — éligible au titre de brigade championne.`;
   $('#brigade-code').textContent = b.inviteCode;
+  // Contribution de chaque membre POUR la brigade cette saison (pas son score total).
+  const forBrigade = new Map((b.objectives?.contributors ?? []).map((c) => [c.id, c.hits]));
+  const active = new Set(activeMates().map((m) => m.playerId));
   $('#brigade-members').replaceChildren(
     ...b.members
-      .slice()
-      .sort((x, y) => y.hits - x.hits)
-      .map((m, i) =>
-        el(
+      .map((m) => ({ ...m, mine: forBrigade.get(m.id) ?? 0 }))
+      .sort((x, y) => y.mine - x.mine || (x.name < y.name ? -1 : 1))
+      .map((m, i) => {
+        const join = el('button', { type: 'button', cls: 'join-mate', textContent: 'Rejoindre', title: `Aller là où ${m.name} mine en ce moment` });
+        join.dataset.player = m.id;
+        join.hidden = !active.has(m.id);
+        join.addEventListener('click', () => {
+          joinBrigade(m.id);
+          closePanel(); // téléphone : le tiroir se referme pour montrer la surface (sans effet sur ordinateur)
+        });
+        return el(
           'li',
           { cls: m.id === state.player?.id ? 'me' : '' },
           el('span', { cls: 'rank', textContent: `#${i + 1}` }),
           el('span', { cls: 'name', textContent: m.name }),
-          el('span', { cls: 'sub', textContent: m.id === b.ownerId ? 'chef' : '' }),
-          el('span', { cls: 'score', textContent: m.hits.toLocaleString('fr-FR') }),
-        ),
-      ),
+          el('span', { cls: 'sub' }, m.id === b.ownerId ? 'chef ' : '', join),
+          el('span', { cls: 'score', textContent: m.mine.toLocaleString('fr-FR') }),
+        );
+      }),
+  );
+  renderBrigadeObjectives(
+    { emblem: $('#brigade-emblem'), title: $('#brigade-title'), totals: $('#brigade-totals'), objectives: $('#brigade-objectives'), distinctions: $('#brigade-distinctions'), former: $('#brigade-former') },
+    b.objectives,
+    brigadeColor(b.name),
   );
 }
 

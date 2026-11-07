@@ -137,14 +137,28 @@
               <p class="muted small">Brigades privées de <span class="bmin">5</span> à <span class="bmax">10</span> mineurs, sur invitation uniquement.</p>
             </div>
             <div id="brigade-mine" class="hidden">
-              <h2 id="brigade-name"></h2>
-              <p class="muted" id="brigade-status"></p>
+              <div class="brigade-id">
+                <span class="brigade-emblem" id="brigade-emblem" aria-hidden="true"></span>
+                <div>
+                  <h2 id="brigade-name"></h2>
+                  <div class="brigade-title" id="brigade-title"></div>
+                </div>
+              </div>
+              <p class="muted small" id="brigade-status"></p>
+              <p class="brigade-totals" id="brigade-totals"></p>
               <div class="invite">
                 <span>Code d'invitation</span>
                 <code id="brigade-code"></code>
                 <button type="button" id="brigade-copy">Copier</button>
               </div>
+              <h2>Objectifs de brigade</h2>
+              <ol class="brigade-objectives" id="brigade-objectives"></ol>
+              <h2>Membres et contributions</h2>
               <ol class="board" id="brigade-members"></ol>
+              <p class="muted small" id="brigade-former"></p>
+              <h2>Distinctions</h2>
+              <ul class="brigade-distinctions" id="brigade-distinctions"></ul>
+              <p class="muted small">Objectifs collectifs de la saison, ouverts à toutes les brigades, même de moins de <span class="bmin">5</span> membres. Récompenses uniquement honorifiques et cosmétiques : aucun bonus de minage, de score, de cadence ni de temps de jeu.</p>
               <button type="button" class="danger" id="brigade-leave">Quitter la brigade</button>
             </div>
           </div>

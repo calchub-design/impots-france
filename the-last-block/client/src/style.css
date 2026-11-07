@@ -1512,3 +1512,216 @@ body[data-renderer='monolith'] .vignette {
   border: 1px solid rgba(190, 130, 255, 0.5);
   vertical-align: 1px;
 }
+
+/* --- Brigade : identité et objectifs -------------------------------------- */
+
+.brigade-id {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 0.4rem;
+}
+
+.brigade-id h2 {
+  margin: 0;
+}
+
+.brigade-emblem {
+  --bc: #7fe9ff;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  font-size: 1.5rem;
+  color: var(--bc);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.06), rgba(10, 12, 28, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  text-shadow: 0 0 8px var(--bc);
+}
+
+/* Cadres d'emblème débloqués par les paliers de la saison (cosmétique). */
+.brigade-emblem.frame-1 {
+  border: 2px solid var(--bc);
+}
+
+.brigade-emblem.frame-2 {
+  border: 2px solid var(--bc);
+  box-shadow:
+    0 0 0 3px rgba(10, 12, 28, 0.9),
+    0 0 0 4px var(--bc),
+    0 0 14px var(--bc);
+}
+
+.brigade-emblem.frame-3 {
+  border: 2px solid var(--bc);
+  box-shadow:
+    0 0 0 3px rgba(10, 12, 28, 0.9),
+    0 0 0 4px #c9a6ff,
+    0 0 22px var(--bc);
+  animation: emblem-glow 3s ease-in-out infinite;
+}
+
+@keyframes emblem-glow {
+  50% {
+    box-shadow:
+      0 0 0 3px rgba(10, 12, 28, 0.9),
+      0 0 0 4px #c9a6ff,
+      0 0 34px var(--bc);
+  }
+}
+
+.brigade-title {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #bdf4ff;
+}
+
+.brigade-totals {
+  font-size: 0.8rem;
+  margin: 0.2rem 0 0.5rem;
+}
+
+.brigade-objectives {
+  list-style: none;
+  margin: 0.3rem 0 0.7rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.bobj {
+  padding: 0.55rem 0.7rem 0.6rem;
+  border-radius: 10px 3px 10px 3px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.bobj.complete {
+  border-color: rgba(127, 233, 255, 0.5);
+  background: linear-gradient(160deg, rgba(20, 40, 72, 0.9), rgba(34, 22, 64, 0.9));
+}
+
+.bobj-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.bobj-count {
+  font-size: 0.74rem;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bobj-desc,
+.bobj-who {
+  font-size: 0.74rem;
+  color: var(--muted);
+  margin: 0.15rem 0 0.2rem;
+}
+
+.bobj-bar {
+  position: relative;
+  height: 6px;
+  margin: 0.45rem 0 1.1rem;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.bobj-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #41e0ff, #a064ff);
+  box-shadow: 0 0 8px rgba(65, 224, 255, 0.5);
+  transition: width 0.35s ease-out;
+}
+
+.bobj-tick {
+  position: absolute;
+  top: 8px;
+  transform: translateX(-100%);
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #6d6a96;
+}
+
+.bobj-tick::before {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: -10px;
+  width: 2px;
+  height: 10px;
+  background: #6d6a96;
+}
+
+.bobj-tick.reached {
+  color: #7fe9ff;
+}
+
+.bobj-tick.reached::before {
+  background: #7fe9ff;
+}
+
+.join-mate {
+  margin-left: 0.3rem;
+  min-height: 26px;
+  padding: 0 0.5rem;
+  border-radius: 6px;
+  border: 1px solid rgba(127, 233, 255, 0.45);
+  background: rgba(65, 224, 255, 0.12);
+  color: #dff9ff;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.join-mate[hidden] {
+  display: none;
+}
+
+.brigade-distinctions {
+  list-style: none;
+  margin: 0.2rem 0 0.6rem;
+  padding: 0;
+  font-size: 0.8rem;
+}
+
+.brigade-distinctions li {
+  display: grid;
+  grid-template-columns: 1.3rem 1fr auto;
+  gap: 0.4rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.brigade-distinctions li.muted {
+  display: block;
+}
+
+.dist-glyph {
+  color: #7fe9ff;
+}
+
+.dist-meta {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brigade-emblem.frame-3 {
+    animation: none;
+  }
+  .bobj-fill {
+    transition: none;
+  }
+}

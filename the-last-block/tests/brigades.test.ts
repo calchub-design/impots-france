@@ -312,3 +312,16 @@ describe('objectifs de brigade : WebSocket', () => {
     expect(w.brigade!.objectives!.contributors.map((c) => c.hits)).toEqual([30, 30, 0]);
   }, 40_000);
 });
+
+describe('objectifs de brigade : jauge à segments', () => {
+  it('chaque palier occupe un segment de même largeur', async () => {
+    const { segmentedFill } = await import('../client/src/brigade.js');
+    const t = [500, 5000, 25000];
+    expect(segmentedFill(t, 0)).toBe(0);
+    expect(segmentedFill(t, 250)).toBeCloseTo(1 / 6);
+    expect(segmentedFill(t, 500)).toBeCloseTo(1 / 3);
+    expect(segmentedFill(t, 2750)).toBeCloseTo(1 / 2);
+    expect(segmentedFill(t, 25000)).toBe(1);
+    expect(segmentedFill(t, 99999)).toBe(1);
+  });
+});
