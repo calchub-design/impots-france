@@ -16,6 +16,8 @@ import type {
 import { PRESENCE_WINDOW_MS } from '../../shared/protocol.js';
 import { discoveryHint, HINT_LABELS, type DiscoveryLog } from '../../shared/discoveries.js';
 import { hintText, renderArchives, RevealOverlay, SeenFragments } from './discoveries.js';
+import { missionsDone, renderMissions, resetText } from './missions.js';
+import type { MissionHistoryDay, MissionsState } from '../../shared/missions.js';
 import { SKINS, skinById } from '../../shared/skins.js';
 import { GameSocket, type ConnState } from './net.js';
 import { Scene } from './scene.js';
@@ -52,6 +54,9 @@ interface State {
   lastEnded: SeasonInfo | null;
   /** Archives du cube de la saison courante (ou dernière), telles qu'envoyées par le serveur. */
   discoveries: DiscoveryLog | null;
+  /** Missions du jour, telles qu'envoyées par le serveur. */
+  missions: MissionsState | null;
+  missionHistory: MissionHistoryDay[];
 }
 
 const state: State = {
@@ -71,6 +76,8 @@ const state: State = {
   projection: null,
   lastEnded: null,
   discoveries: null,
+  missions: null,
+  missionHistory: [],
 };
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -345,6 +352,43 @@ $<HTMLSelectElement>('#archives-season').addEventListener('change', async (e) =>
     toast('Archives indisponibles hors connexion.', 'bad');
   }
 });
+
+// ---------------------------------------------------------------------------
+// Missions du jour (état serveur uniquement)
+// ---------------------------------------------------------------------------
+
+function renderMissionsView() {
+  renderMissions(
+    { list: $('#missions-list'), reset: $('#missions-reset'), rank: $('#missions-rank'), history: $('#missions-history') },
+    state.missions,
+    state.missionHistory,
+    serverNow(),
+  );
+  const { done, total } = missionsDone(state.missions);
+  for (const id of ['#missions-count', '#menu-missions']) {
+    const b = $(id);
+    b.hidden = total === 0;
+    b.textContent = `${done}/${total}`;
+    b.classList.toggle('all', total > 0 && done === total);
+  }
+  $('#menu-missions').setAttribute('aria-label', `Missions du jour : ${done} sur ${total}`);
+}
+
+function receiveMissions(s: MissionsState | null, completed: string[] = [], unlocked: string[] = []) {
+  state.missions = s;
+  if (s?.history) state.missionHistory = s.history;
+  if (s && s.seasonId === null) state.missionHistory = [];
+  renderMissionsView();
+  if (s && completed.length) {
+    for (const id of completed) toast(`◈ Mission accomplie : ${s.missions.find((m) => m.id === id)?.title ?? id}`, 'good');
+    if (s.missions.every((m) => m.done)) toast('Toutes les missions du jour sont accomplies.', 'good');
+  }
+  if (unlocked.length && s?.reward) toast(`${s.reward.label} débloquée : à choisir dans Profil.`, 'good');
+  if (unlocked.length) renderProfile();
+}
+setInterval(() => {
+  if (state.missions) $('#missions-reset').textContent = state.missions.seasonId === null ? '' : resetText(state.missions, serverNow());
+}, 30_000);
 
 function renderSignalHint() {
   const chip = $('#chip-signal');
@@ -687,6 +731,7 @@ function onMessage(msg: ServerMessage) {
       setPresence(msg.presence);
       ($('#presence-visible') as HTMLInputElement).checked = msg.presenceVisible;
       receiveDiscoveries(msg.discoveries ?? null, true);
+      receiveMissions(msg.missions ?? null);
       if (!msg.season) loadSeasons(); // intersaison : récupère la saison écoulée pour le panneau
       applyCube(face === null || face.size !== msg.cube?.size || lastSeasonId !== msg.season?.id);
       lastSeasonId = msg.season?.id ?? null;
@@ -710,6 +755,9 @@ function onMessage(msg: ServerMessage) {
       // Une découverte vient d'être annoncée pour cette couche : pas de seconde notification.
       if (Date.now() - lastRevealAt > 3000) toast(`Couche ${msg.cube.currentLayer + 1} atteinte !`, 'good');
       renderHud();
+      break;
+    case 'missions':
+      receiveMissions(msg.missions, msg.completed, msg.unlocked);
       break;
     case 'discovery':
       // Révélation validée par le serveur (couche entièrement détruite), reçue par tous.
@@ -1145,11 +1193,19 @@ function renderProfile() {
   if (document.activeElement !== input) input.value = state.player?.name ?? '';
   $('#skins').replaceChildren(
     ...SKINS.map((s) => {
-      const btn = el('button', { type: 'button', cls: `skin${state.player?.skin === s.id ? ' active' : ''}`, title: s.label });
+      // Teinte à débloquer gratuitement (missions) : affichée verrouillée, jamais achetable.
+      const locked = !!s.unlock && !state.missions?.unlocks.includes(s.unlock);
+      const btn = el('button', {
+        type: 'button',
+        cls: `skin${state.player?.skin === s.id ? ' active' : ''}${locked ? ' locked' : ''}`,
+        title: locked ? `${s.label} : à débloquer en accomplissant toutes les missions d'une journée` : s.label,
+      });
       btn.style.setProperty('--c', s.color);
       btn.style.setProperty('--a', s.accent);
       btn.append(el('span', { cls: 'swatch' }), el('span', { textContent: s.label }));
-      btn.addEventListener('click', () => socket.send({ t: 'setSkin', skin: s.id }));
+      btn.addEventListener('click', () =>
+        locked ? toast(`Teinte « ${s.label} » : accomplissez toutes les missions d'une même journée pour la débloquer.`, 'info') : socket.send({ t: 'setSkin', skin: s.id }),
+      );
       return btn;
     }),
   );
@@ -1248,6 +1304,7 @@ document.querySelectorAll<HTMLButtonElement>('.tabs button').forEach((btn) =>
       renderProjection();
     }
     if (btn.dataset.tab === 'archives') void openArchives();
+    if (btn.dataset.tab === 'missions') renderMissionsView();
   }),
 );
 

@@ -21,7 +21,8 @@
     "loadtest": "tsx scripts/loadtest.ts",
     "calibrate": "tsx scripts/calibrate.ts",
     "e2e": "node scripts/e2e-browser.mjs",
-    "e2e:decouvertes": "node scripts/e2e-decouvertes.mjs"
+    "e2e:decouvertes": "node scripts/e2e-decouvertes.mjs",
+    "e2e:missions": "node scripts/e2e-missions.mjs"
   },
   "dependencies": {
     "ws": "^8.22.1"

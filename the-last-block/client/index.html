@@ -21,7 +21,7 @@
         <div class="status" id="conn-status" data-state="connecting" title="État de la connexion">
           <span class="dot"></span><span class="label">Connexion…</span>
         </div>
-        <button type="button" class="menu-btn" id="menu-btn" aria-controls="panel" aria-expanded="false">☰ Menu</button>
+        <button type="button" class="menu-btn" id="menu-btn" aria-controls="panel" aria-expanded="false">☰ Menu<span class="menu-badge" id="menu-missions" hidden></span></button>
       </header>
 
       <main class="layout">
@@ -95,6 +95,7 @@
           <button type="button" class="sheet-close" id="panel-close">Fermer ✕</button>
           <nav class="tabs" role="tablist">
             <button role="tab" data-tab="board" class="active">Classement</button>
+            <button role="tab" data-tab="missions" id="missions-tab">Missions <span class="tab-count" id="missions-count" hidden></span></button>
             <button role="tab" data-tab="brigade">Brigade</button>
             <button role="tab" data-tab="seasons">Saisons</button>
             <button role="tab" data-tab="archives" id="archives-tab">Archives</button>
@@ -107,6 +108,18 @@
             <h2>Brigades</h2>
             <ol class="board" id="board-brigades"></ol>
             <p class="muted small">Seules les brigades d'au moins <span class="bmin">5</span> membres peuvent devenir championnes.</p>
+          </div>
+
+          <div class="tab-body hidden" data-body="missions">
+            <div class="missions-head">
+              <h2>Missions du jour</h2>
+              <span class="small muted" id="missions-reset"></span>
+            </div>
+            <ol class="missions" id="missions-list"></ol>
+            <div class="missions-rank" id="missions-rank"></div>
+            <h2>Historique de la saison</h2>
+            <ol class="missions-history" id="missions-history"></ol>
+            <p class="muted small">Missions facultatives. Récompenses honorifiques et cosmétiques gratuites, sans aucun effet sur les dégâts, la cadence, le temps de jeu ni le classement.</p>
           </div>
 
           <div class="tab-body hidden" data-body="brigade">
