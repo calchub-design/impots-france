@@ -168,6 +168,42 @@ CREATE TABLE IF NOT EXISTS player_unlocks (
   PRIMARY KEY (player_id, unlock_id)
 ) WITHOUT ROWID;
 
+-- Objectifs de brigade (saisonniers). Contribution d'un membre POUR la brigade dont il était
+-- membre au moment du coup (même règle que hits.brigade_id) : elle reste acquise s'il part.
+CREATE TABLE IF NOT EXISTS brigade_member_contributions (
+  season_id INTEGER NOT NULL,
+  brigade_id TEXT NOT NULL,
+  player_id TEXT NOT NULL,
+  hits INTEGER NOT NULL DEFAULT 0,
+  last_hit_at INTEGER NOT NULL,
+  PRIMARY KEY (season_id, brigade_id, player_id)
+) WITHOUT ROWID;
+-- Coups d'une brigade sur une couche (plafonnés au seuil utile).
+CREATE TABLE IF NOT EXISTS brigade_layer_hits (
+  season_id INTEGER NOT NULL,
+  layer INTEGER NOT NULL,
+  brigade_id TEXT NOT NULL,
+  hits INTEGER NOT NULL,
+  PRIMARY KEY (season_id, layer, brigade_id)
+) WITHOUT ROWID;
+-- Valeurs des objectifs qui ne se déduisent pas d'un compteur existant.
+CREATE TABLE IF NOT EXISTS brigade_objective_values (
+  season_id INTEGER NOT NULL,
+  brigade_id TEXT NOT NULL,
+  objective_id TEXT NOT NULL,
+  value INTEGER NOT NULL,
+  PRIMARY KEY (season_id, brigade_id, objective_id)
+) WITHOUT ROWID;
+-- Distinctions débloquées (une fois par saison, brigade, objectif et palier).
+CREATE TABLE IF NOT EXISTS brigade_distinctions (
+  season_id INTEGER NOT NULL,
+  brigade_id TEXT NOT NULL,
+  objective_id TEXT NOT NULL,
+  tier INTEGER NOT NULL,
+  unlocked_at INTEGER NOT NULL,
+  PRIMARY KEY (season_id, brigade_id, objective_id, tier)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS season_results (
   season_id INTEGER NOT NULL,
   kind TEXT NOT NULL,
@@ -342,6 +378,55 @@ export class SqliteStore implements GameStore {
   }
 
   // --- Blocs ---------------------------------------------------------------
+
+  // --- Objectifs de brigade ----------------------------------------------------
+  getBrigadeMemberHits(seasonId: number, brigadeId: string) {
+    return this.all<{ player_id: string; hits: number; last_hit_at: number }>(
+      'SELECT player_id, hits, last_hit_at FROM brigade_member_contributions WHERE season_id = ? AND brigade_id = ?',
+      seasonId, brigadeId,
+    );
+  }
+  addBrigadeMemberHit(seasonId: number, brigadeId: string, playerId: string, at: number) {
+    this.run(
+      `INSERT INTO brigade_member_contributions(season_id, brigade_id, player_id, hits, last_hit_at) VALUES (?,?,?,1,?)
+       ON CONFLICT(season_id, brigade_id, player_id) DO UPDATE SET hits = hits + 1, last_hit_at = excluded.last_hit_at`,
+      seasonId, brigadeId, playerId, at,
+    );
+  }
+  getBrigadeLayerHits(seasonId: number, brigadeId: string) {
+    return this.all<{ layer: number; hits: number }>('SELECT layer, hits FROM brigade_layer_hits WHERE season_id = ? AND brigade_id = ?', seasonId, brigadeId);
+  }
+  setBrigadeLayerHits(seasonId: number, brigadeId: string, layer: number, hits: number) {
+    this.run(
+      `INSERT INTO brigade_layer_hits(season_id, layer, brigade_id, hits) VALUES (?,?,?,?)
+       ON CONFLICT(season_id, layer, brigade_id) DO UPDATE SET hits = excluded.hits`,
+      seasonId, layer, brigadeId, hits,
+    );
+  }
+  brigadesWithLayerHits(seasonId: number, layer: number, minHits: number) {
+    return this.all<{ brigade_id: string; hits: number }>('SELECT brigade_id, hits FROM brigade_layer_hits WHERE season_id = ? AND layer = ? AND hits >= ?', seasonId, layer, minHits);
+  }
+  getBrigadeObjectiveValues(seasonId: number, brigadeId: string) {
+    return this.all<{ objective_id: string; value: number }>('SELECT objective_id, value FROM brigade_objective_values WHERE season_id = ? AND brigade_id = ?', seasonId, brigadeId);
+  }
+  setBrigadeObjectiveValue(seasonId: number, brigadeId: string, objectiveId: string, value: number) {
+    this.run(
+      `INSERT INTO brigade_objective_values(season_id, brigade_id, objective_id, value) VALUES (?,?,?,?)
+       ON CONFLICT(season_id, brigade_id, objective_id) DO UPDATE SET value = excluded.value`,
+      seasonId, brigadeId, objectiveId, value,
+    );
+  }
+  insertBrigadeDistinction(seasonId: number, brigadeId: string, objectiveId: string, tier: number, at: number): boolean {
+    return Number(this.run('INSERT OR IGNORE INTO brigade_distinctions(season_id, brigade_id, objective_id, tier, unlocked_at) VALUES (?,?,?,?,?)', seasonId, brigadeId, objectiveId, tier, at).changes) > 0;
+  }
+  listBrigadeDistinctions(brigadeId: string) {
+    return this.all<{ season_id: number; season_name: string; objective_id: string; tier: number; unlocked_at: number }>(
+      `SELECT d.season_id, s.name AS season_name, d.objective_id, d.tier, d.unlocked_at
+       FROM brigade_distinctions d JOIN seasons s ON s.id = d.season_id
+       WHERE d.brigade_id = ? ORDER BY d.unlocked_at DESC, d.objective_id, d.tier DESC`,
+      brigadeId,
+    );
+  }
 
   // --- Missions quotidiennes --------------------------------------------------
   getDailyMissions(seasonId: number, playerId: string, day: string) {

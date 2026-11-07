@@ -20,6 +20,7 @@ import type { DiscoveryRow, GameStore, SeasonResultRow, SeasonRow } from '../db/
 import type { DiscoveryFragment, DiscoveryLog } from '../../shared/discoveries.js';
 import { buildDiscoveryPlan, isKnownProfile, NO_DISCOVERIES } from './discoveries.js';
 import { MissionTracker } from './missions.js';
+import { BrigadeObjectiveTracker } from './brigadeObjectives.js';
 import type { MissionsState } from '../../shared/missions.js';
 import { generateGuestToken, hashToken, isWellFormedToken } from '../auth/guest.js';
 import { activeCredit, dayKey, nextDayStart } from './playtime.js';
@@ -57,6 +58,8 @@ export type EngineEvent =
   | { type: 'discovery'; seasonId: number; fragment: DiscoveryFragment }
   /** Avancement des missions quotidiennes d'un joueur (après COMMIT). */
   | { type: 'missions'; playerId: string; completed: string[]; unlocked: string[] }
+  /** Progression des objectifs d'une brigade (après COMMIT) ; `unlocked` : distinctions débloquées. */
+  | { type: 'brigadeProgress'; brigadeId: string; unlocked: string[] }
   | { type: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null }
   | { type: 'seasonStarted'; seasonId: number }
   | { type: 'brigadeChanged'; brigadeId: string; playerIds: string[] }
@@ -121,6 +124,8 @@ export class GameEngine {
   private nextSeasonAt: number | null = null;
   /** Missions quotidiennes individuelles (sans effet sur le jeu). */
   readonly missions: MissionTracker;
+  /** Objectifs collectifs de brigade (sans effet sur le jeu ni le championnat). */
+  readonly brigadeObjectives: BrigadeObjectiveTracker;
   /** Dernier refus de création automatique de saison (configuration invalide), sinon null. */
   seasonStartError: string | null = null;
   private brigadeCache: Map<string, { name: string; members: number }> | null = null;
@@ -143,6 +148,7 @@ export class GameEngine {
     this.now = opts.now ?? Date.now;
     this.limiter = new SlidingWindowLimiter(rules.maxActionsPerSecond, rules.rateWindowMs);
     this.missions = new MissionTracker(store);
+    this.brigadeObjectives = new BrigadeObjectiveTracker(store);
     const active = store.getActiveSeason();
     if (active) {
       this.loadSeason(active);
@@ -395,6 +401,7 @@ export class GameEngine {
     let hpAfter: number;
     let revealed: DiscoveryRow | undefined;
     this.missions.begin();
+    this.brigadeObjectives.begin();
     try {
       hpAfter = this.store.transaction(() => {
         const hp = this.store.damageBlock(st.season.id, L, B, playerId, now);
@@ -412,7 +419,11 @@ export class GameEngine {
           at: now,
         });
         this.store.addContribution(st.season.id, playerId, destroyed, now);
-        if (brigadeId) this.store.addBrigadeContribution(st.season.id, brigadeId, destroyed, now);
+        if (brigadeId) {
+          this.store.addBrigadeContribution(st.season.id, brigadeId, destroyed, now);
+          // Objectifs de brigade : même transaction, crédités à la brigade du moment du coup.
+          this.brigadeObjectives.onHit(st.season.id, brigadeId, playerId, L, (st.brigades.get(brigadeId)?.hits ?? 0) + 1, now);
+        }
         this.store.setPlaytime(playerId, p.playDay, newPlayMs);
         this.store.setLastActionAt(playerId, now);
         // Découverte : dans la MÊME transaction que le coup qui achève la couche. La
@@ -424,11 +435,15 @@ export class GameEngine {
         }
         // Missions quotidiennes : même transaction (aucun double comptage, aucune perte au crash).
         this.missions.onHit(st.season.id, playerId, L, B, now);
-        if (destroyed && st.layerRemaining[L] === 1) this.missions.onLayerCompleted(st.season.id, L, now);
+        if (destroyed && st.layerRemaining[L] === 1) {
+          this.missions.onLayerCompleted(st.season.id, L, now);
+          this.brigadeObjectives.onLayerCompleted(st.season.id, L, now);
+        }
         return hp;
       });
     } catch (err) {
       this.missions.abort();
+      this.brigadeObjectives.abort();
       if (err instanceof AlreadyDestroyed) {
         st.hp[cell] = 0;
         return { ok: false, reason: 'already_destroyed' };
@@ -454,8 +469,10 @@ export class GameEngine {
     this.rankDirty = true;
 
     const missionUpdates = this.missions.commit();
+    const brigadeUpdates = this.brigadeObjectives.commit();
     this.emit({ type: 'block', seasonId: st.season.id, layer: L, block: B, hp: hpAfter, playerId });
     for (const u of missionUpdates) this.emit({ type: 'missions', playerId: u.playerId, completed: u.completed, unlocked: u.unlocked });
+    for (const u of brigadeUpdates) this.emit({ type: 'brigadeProgress', brigadeId: u.brigadeId, unlocked: u.unlocked });
     if (revealed) {
       const row = revealed;
       const i = st.discoveries.findIndex((d) => d.fragment_id === row.fragment_id);
@@ -872,14 +889,23 @@ export class GameEngine {
     const b = this.store.getBrigade(brigadeId);
     if (!b) return null;
     const players = this.state?.players;
+    const members = this.store.listMembers(b.id);
     return {
       id: b.id,
       name: b.name,
       inviteCode: b.invite_code,
       ownerId: b.owner_id,
-      members: this.store.listMembers(b.id).map((m) => ({ id: m.id, name: m.name, hits: players?.get(m.id)?.hits ?? 0 })),
+      members: members.map((m) => ({ id: m.id, name: m.name, hits: players?.get(m.id)?.hits ?? 0 })),
       minSize: this.rules.brigadeMinSize,
       maxSize: this.rules.brigadeMaxSize,
+      objectives: this.brigadeObjectives.info(
+        b.id,
+        b.name,
+        this.state?.season.id ?? null,
+        { hits: this.state?.brigades.get(b.id)?.hits ?? 0, blocks: this.state?.brigades.get(b.id)?.blocks ?? 0 },
+        members,
+        (id) => this.player(id).name,
+      ),
     };
   }
 

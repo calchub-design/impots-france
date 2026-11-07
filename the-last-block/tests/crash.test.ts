@@ -416,3 +416,65 @@ describe('arrêt brutal (SIGKILL) et missions quotidiennes', () => {
     checkInvariants(db.path);
   }, 60_000);
 });
+
+describe('arrêt brutal (SIGKILL) et objectifs de brigade', () => {
+  it('contributions par membre = journal des coups, valeurs et distinctions cohérentes, rien en double', async () => {
+    const db = tempDbPath();
+    cleanups.push(db.cleanup);
+    const env = { CUBE_SIZE: '4', BLOCK_BASE_HP: '100000', BLOCK_HP_PER_LAYER: '0', MAX_ACTIONS_PER_SECOND: '100' };
+    let { proc, port } = await startProcess(db.path, env);
+    const url = `ws://127.0.0.1:${port}/ws`;
+    const players = [0, 1, 2].map(() => new TestClient(url));
+    for (const [i, p] of players.entries()) await p.connect(undefined, `Brigadier ${i}`);
+    players[0].send({ t: 'brigadeCreate', name: 'Résistants' });
+    const created = await players[0].waitFor((m) => m.t === 'brigade' && m.brigade !== null);
+    const code = created.t === 'brigade' ? created.brigade!.inviteCode : '';
+    for (const p of players.slice(1)) {
+      p.send({ t: 'brigadeJoin', code });
+      await p.waitFor((m) => m.t === 'brigade' && m.brigade !== null);
+    }
+    // Trois membres minent en même temps (au rythme permis par connexion), puis rafale et SIGKILL.
+    await Promise.all(
+      players.map(async (p, k) => {
+        for (let i = 0; i < 105; i++) {
+          expect((await p.mine(0, (i + k) % 16)).ok).toBe(true);
+          await new Promise((r) => setTimeout(r, 30));
+        }
+      }),
+    );
+    for (const [k, p] of players.entries()) for (let i = 0; i < 12; i++) p.send({ t: 'mine', actionId: `rafale-${k}-${i}-xxxxxxxx`, layer: 0, block: i });
+    await new Promise((r) => setTimeout(r, 15));
+    await kill9(proc);
+    for (const p of players) await p.close().catch(() => {});
+
+    ({ proc, port } = await startProcess(db.path, env));
+    const again = new TestClient(`ws://127.0.0.1:${port}/ws`);
+    const w = await again.connect(players[1].token);
+    await again.close();
+    await kill9(proc);
+    checkInvariants(db.path);
+
+    const raw = new DatabaseSync(db.path);
+    try {
+      const fromJournal = raw
+        .prepare('SELECT brigade_id, player_id, COUNT(*) AS n FROM hits WHERE brigade_id IS NOT NULL GROUP BY brigade_id, player_id ORDER BY player_id')
+        .all() as { brigade_id: string; player_id: string; n: number }[];
+      const stored = raw.prepare('SELECT brigade_id, player_id, hits AS n FROM brigade_member_contributions ORDER BY player_id').all() as typeof fromJournal;
+      expect(stored).toEqual(fromJournal);
+      const total = (raw.prepare('SELECT hits FROM brigade_contributions').get() as { hits: number }).hits;
+      expect(total).toBe(fromJournal.reduce((s, r) => s + r.n, 0));
+      const qualified = fromJournal.filter((r) => r.n >= 100).length;
+      const value = raw.prepare("SELECT value FROM brigade_objective_values WHERE objective_id = 'together'").get() as { value: number } | undefined;
+      expect(value?.value ?? 0).toBe(qualified);
+      const tiers = (id: string) => (raw.prepare('SELECT tier FROM brigade_distinctions WHERE objective_id = ? ORDER BY tier').all(id) as { tier: number }[]).map((r) => r.tier);
+      // Paliers enregistrés = paliers réellement atteints (2, 3, 5 membres ; 500 coups).
+      expect(tiers('together')).toEqual([2, 3, 5].filter((t) => qualified >= t).map((_, i) => i + 1));
+      expect(tiers('effort')).toEqual(total >= 500 ? [1] : []);
+      // L'état envoyé après la reprise correspond à la base.
+      expect(w.brigade!.objectives!.totals.hits).toBe(total);
+      expect(w.brigade!.objectives!.objectives.find((o) => o.id === 'together')!.value).toBe(qualified);
+    } finally {
+      raw.close();
+    }
+  }, 60_000);
+});

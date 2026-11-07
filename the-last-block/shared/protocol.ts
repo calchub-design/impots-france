@@ -6,6 +6,7 @@
 
 import type { DiscoveryFragment, DiscoveryLog } from './discoveries.js';
 import type { MissionsState } from './missions.js';
+import type { BrigadeObjectivesInfo } from './brigades.js';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -122,6 +123,8 @@ export interface BrigadeInfo {
   members: { id: string; name: string; hits: number }[];
   minSize: number;
   maxSize: number;
+  /** Identité, contributions et objectifs collectifs (champ optionnel, compatible avec les anciens clients). */
+  objectives?: BrigadeObjectivesInfo;
 }
 
 export interface MyStats {
@@ -247,7 +250,8 @@ export type ServerMessage =
   | { t: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null }
   | { t: 'seasonStarted' }
   | { t: 'profile'; player: PublicPlayer; presenceVisible?: boolean }
-  | { t: 'brigade'; brigade: BrigadeInfo | null }
+  /** `unlocked` : distinctions de brigade qui viennent d'être débloquées (libellés). */
+  | { t: 'brigade'; brigade: BrigadeInfo | null; unlocked?: string[] }
   | { t: 'error'; code: string; message: string }
   | { t: 'pong'; ts: number; serverTime: number };
 

@@ -143,7 +143,17 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
     pending = [];
   }
 
+  /** Brigades dont la progression a changé : leurs membres connectés reçoivent l'état à jour (groupé). */
+  const dirtyBrigades = new Set<string>();
+  function flushBrigades() {
+    for (const id of dirtyBrigades) {
+      for (const m of store.listMembers(id)) toPlayer(m.id, () => ({ t: 'brigade', brigade: engine.brigadeInfo(m.id) }));
+    }
+    dirtyBrigades.clear();
+  }
+
   function flushBoard() {
+    flushBrigades();
     if (!boardDirty) return;
     boardDirty = false;
     broadcast({
@@ -226,6 +236,15 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       case 'seasonStarted':
         broadcast({ t: 'seasonStarted' });
         queueMicrotask(resyncAll);
+        break;
+      case 'brigadeProgress':
+        if (e.unlocked.length) {
+          // Distinction débloquée : envoi immédiat à tous les membres connectés, avec le libellé.
+          dirtyBrigades.delete(e.brigadeId);
+          for (const m of store.listMembers(e.brigadeId)) toPlayer(m.id, () => ({ t: 'brigade', brigade: engine.brigadeInfo(m.id), unlocked: e.unlocked }));
+        } else {
+          dirtyBrigades.add(e.brigadeId);
+        }
         break;
       case 'brigadeChanged':
         boardDirty = true;

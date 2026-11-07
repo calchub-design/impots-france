@@ -1,0 +1,33 @@
+{
+  "objectives": [
+    {
+      "id": "effort",
+      "kind": "brigade-hits",
+      "title": "Effort collectif",
+      "description": "Coups de minage validés par les membres pour la brigade cette saison.",
+      "tiers": [500, 5000, 25000]
+    },
+    {
+      "id": "together",
+      "kind": "members-min-hits",
+      "title": "Tous ensemble",
+      "description": "Membres distincts ayant donné au moins {minHits} coups pour la brigade cette saison.",
+      "minHits": 100,
+      "tiers": [2, 3, 5]
+    },
+    {
+      "id": "signal",
+      "kind": "layers-explored",
+      "title": "Exploration du Signal",
+      "description": "Couches terminées cette saison sur lesquelles la brigade a donné au moins {minHits} coups.",
+      "minHits": 50,
+      "tiers": [1, 3, 6]
+    }
+  ],
+  "tierLabels": ["I", "II", "III"],
+  "titles": [
+    { "at": 1, "title": "Brigade éveillée" },
+    { "at": 4, "title": "Brigade résonante" },
+    { "at": 9, "title": "Brigade du Signal" }
+  ]
+}

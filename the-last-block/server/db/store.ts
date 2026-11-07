@@ -159,6 +159,18 @@ export interface GameStore {
   listBrigades(): (BrigadeRow & { members: number })[];
 
   // Archives
+  // Objectifs de brigade
+  getBrigadeMemberHits(seasonId: number, brigadeId: string): { player_id: string; hits: number; last_hit_at: number }[];
+  addBrigadeMemberHit(seasonId: number, brigadeId: string, playerId: string, at: number): void;
+  getBrigadeLayerHits(seasonId: number, brigadeId: string): { layer: number; hits: number }[];
+  setBrigadeLayerHits(seasonId: number, brigadeId: string, layer: number, hits: number): void;
+  brigadesWithLayerHits(seasonId: number, layer: number, minHits: number): { brigade_id: string; hits: number }[];
+  getBrigadeObjectiveValues(seasonId: number, brigadeId: string): { objective_id: string; value: number }[];
+  setBrigadeObjectiveValue(seasonId: number, brigadeId: string, objectiveId: string, value: number): void;
+  /** Vrai si la distinction vient d'être enregistrée (faux si elle l'était déjà). */
+  insertBrigadeDistinction(seasonId: number, brigadeId: string, objectiveId: string, tier: number, at: number): boolean;
+  listBrigadeDistinctions(brigadeId: string): { season_id: number; season_name: string; objective_id: string; tier: number; unlocked_at: number }[];
+
   // Missions quotidiennes
   getDailyMissions(seasonId: number, playerId: string, day: string): { hits: number; blocks: string; layers: string; layers_done: number } | undefined;
   saveDailyMissions(seasonId: number, playerId: string, day: string, hits: number, blocks: string, layers: string, layersDone: number): void;
