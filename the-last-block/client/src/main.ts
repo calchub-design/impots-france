@@ -18,6 +18,9 @@ import { discoveryHint, HINT_LABELS, type DiscoveryLog } from '../../shared/disc
 import { hintText, renderArchives, RevealOverlay, SeenFragments } from './discoveries.js';
 import { missionsDone, renderMissions, resetText } from './missions.js';
 import { renderBrigadeObjectives } from './brigade.js';
+import { CEREMONY_MS, CeremonyPlayer, endReasonLabel, seasonDates } from './ceremony.js';
+import type { SeasonArchive } from '../../shared/ceremony.js';
+import { DONATION_AMOUNT_PENDING } from '../../shared/ceremony.js';
 import type { MissionHistoryDay, MissionsState } from '../../shared/missions.js';
 import { SKINS, skinById } from '../../shared/skins.js';
 import { GameSocket, type ConnState } from './net.js';
@@ -393,6 +396,62 @@ setInterval(() => {
   if (state.missions) $('#missions-reset').textContent = state.missions.seasonId === null ? '' : resetText(state.missions, serverNow());
 }, 30_000);
 
+// ---------------------------------------------------------------------------
+// Cérémonie de fin de saison et Hall des champions (archives du serveur)
+// ---------------------------------------------------------------------------
+
+const ceremony = new CeremonyPlayer($('#ceremony'), () => reducedMotion, (name) => brigadeColor(name));
+ceremony.onClose = (a) => storageSet('tlb.ceremony.seen', String(a.seasonId));
+
+function playCeremony(a: SeasonArchive, elapsedMs: number) {
+  closePanel();
+  revealOverlay.hide();
+  ceremony.play(a, elapsedMs);
+}
+
+/**
+ * Connexion ou reconnexion : cérémonie en cours → on la rejoint au bon moment ; terminée
+ * depuis peu et jamais vue sur cet appareil → on la propose depuis le début (passable).
+ */
+function receiveCeremony(a: SeasonArchive | null) {
+  if (!a || ceremony.playing) return;
+  const elapsed = serverNow() - a.closedAt;
+  if (elapsed < CEREMONY_MS) playCeremony(a, elapsed);
+  else if (elapsed < 48 * 3600_000 && storageGet('tlb.ceremony.seen') !== String(a.seasonId)) playCeremony(a, 0);
+}
+
+async function loadHall() {
+  try {
+    const r = await fetch('/api/hall');
+    const { seasons } = (await r.json()) as { seasons: SeasonArchive[] };
+    $('#hall-list').replaceChildren(
+      ...(seasons.length
+        ? seasons.map((a) => {
+            const replay = el('button', { type: 'button', cls: 'link', textContent: 'Revoir la cérémonie' });
+            replay.addEventListener('click', () => playCeremony(a, 0));
+            const titles = [a.champion && 'Champion de saison', a.championBrigade && 'Brigade championne', a.finalStone && 'Pierre finale'].filter(Boolean);
+            return el(
+              'li',
+              { cls: 'hall-card' },
+              el('div', { cls: 'hall-head', textContent: a.seasonName === `Saison ${a.number}` ? a.seasonName : `Saison ${a.number} — ${a.seasonName}` }),
+              el('div', { cls: 'small muted', textContent: `${seasonDates(a)} · ${endReasonLabel(a.endReason)}` }),
+              el('div', { cls: 'small', textContent: `Champion : ${a.champion ? `${a.champion.name} (${a.champion.hits.toLocaleString('fr-FR')} coups)` : 'aucun'}` }),
+              el('div', { cls: 'small', textContent: `Brigade championne : ${a.championBrigade ? `${a.championBrigade.emblem} ${a.championBrigade.name} (${a.championBrigade.hits.toLocaleString('fr-FR')} coups, ${a.championBrigade.members} membres)` : 'aucune qualifiée'}` }),
+              el('div', { cls: 'small', textContent: `Pierre finale : ${a.finalStone ? a.finalStone.name : 'non attribuée'}` }),
+              el('div', { cls: 'small', textContent: `Contribution totale : ${a.totals.hits.toLocaleString('fr-FR')} coups de ${a.totals.miners} mineur${a.totals.miners > 1 ? 's' : ''} · ${a.totals.blocksDestroyed.toLocaleString('fr-FR')} / ${a.totals.totalBlocks.toLocaleString('fr-FR')} blocs` }),
+              el('div', { cls: 'small', textContent: `Découvertes : ${a.discoveries.length} / ${a.discoveriesTotal}${a.discoveries.length ? ` (${a.discoveries.map((f) => f.title).join(', ')})` : ''}` }),
+              el('div', { cls: 'small', textContent: `Distinctions : ${[...titles, `${a.brigadeDistinctions.count} distinction${a.brigadeDistinctions.count > 1 ? 's' : ''} de brigade (privées)`].join(' · ')}` }),
+              el('div', { cls: 'small', textContent: `Cause : ${a.donation.associationName ?? 'association à annoncer'} · ${a.donation.amountLabel ?? DONATION_AMOUNT_PENDING}` }),
+              replay,
+            );
+          })
+        : [el('li', { cls: 'muted small', textContent: 'Aucune saison terminée pour l\'instant.' })]),
+    );
+  } catch {
+    /* hors ligne : on réessaiera */
+  }
+}
+
 function renderSignalHint() {
   const chip = $('#chip-signal');
   const h = currentHint();
@@ -747,6 +806,7 @@ function onMessage(msg: ServerMessage) {
       ($('#presence-visible') as HTMLInputElement).checked = msg.presenceVisible;
       receiveDiscoveries(msg.discoveries ?? null, true);
       receiveMissions(msg.missions ?? null);
+      receiveCeremony(msg.ceremony ?? null);
       if (!msg.season) loadSeasons(); // intersaison : récupère la saison écoulée pour le panneau
       applyCube(face === null || face.size !== msg.cube?.size || lastSeasonId !== msg.season?.id);
       lastSeasonId = msg.season?.id ?? null;
@@ -819,7 +879,9 @@ function onMessage(msg: ServerMessage) {
     case 'seasonEnded':
       state.nextSeasonAt = msg.nextSeasonAt;
       state.lastEnded = msg.season;
-      showSeasonEnd(msg.season);
+      // Cérémonie synchronisée sur l'instant de clôture décidé par le serveur.
+      if (msg.archive) playCeremony(msg.archive, serverNow() - msg.archive.closedAt);
+      else showSeasonEnd(msg.season);
       loadSeasons();
       break;
     case 'seasonStarted':
@@ -1248,6 +1310,7 @@ function renderProfile() {
 // ---------------------------------------------------------------------------
 
 async function loadSeasons() {
+  void loadHall();
   try {
     const r = await fetch('/api/seasons');
     const data = (await r.json()) as { seasons: SeasonInfo[] };

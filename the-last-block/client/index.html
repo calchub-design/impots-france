@@ -42,6 +42,21 @@
               <span class="chip signal" id="chip-signal" hidden></span>
               <span class="chip" id="chip-presence" title="Mineurs ayant frappé un bloc dans les 20 dernières secondes (observation réelle)"><b id="hud-presence">0</b> actifs</span>
             </div>
+            <div class="ceremony" id="ceremony" hidden>
+              <div class="cer-veil" aria-hidden="true"></div>
+              <div class="cer-pulse" aria-hidden="true"></div>
+              <section class="cer-panel" aria-label="Cérémonie de fin de saison" aria-live="polite">
+                <div class="cer-kicker" id="cer-kicker"></div>
+                <div class="cer-body" id="cer-body"></div>
+                <div class="cer-foot">
+                  <div class="cer-steps" id="cer-steps" aria-hidden="true"></div>
+                  <div class="cer-actions">
+                    <button type="button" id="cer-next">Suivant</button>
+                    <button type="button" id="cer-skip">Passer</button>
+                  </div>
+                </div>
+              </section>
+            </div>
             <div class="discovery" id="discovery" hidden>
               <div class="discovery-pulse" aria-hidden="true"></div>
               <div class="discovery-card" role="status" aria-live="polite">
@@ -166,6 +181,8 @@
           <div class="tab-body hidden" data-body="seasons">
             <h2>Saison en cours</h2>
             <p class="small" id="projection-text">—</p>
+            <h2>Hall des champions</h2>
+            <ol class="hall" id="hall-list"></ol>
             <h2>Saisons</h2>
             <ul class="seasons" id="season-list"></ul>
             <div id="season-detail"></div>

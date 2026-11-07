@@ -452,10 +452,13 @@ try {
 
   // 13. Saisons : clôture puis nouvelle saison ; la surface repart d'un cube intact.
   const end = await fetch(`${BASE}/api/admin/season/end`, { method: 'POST', headers: { authorization: `Bearer ${ADMIN}` } });
-  await A.waitForSelector('#season-dialog[open]', { timeout: 5000 });
-  const dialog = await A.textContent('#season-dialog-body');
-  check('fin de saison affichée (classement et champion conservés)', end.ok && /Champion : (Alice|Mineur)/.test(dialog), dialog.replace(/\s+/g, ' ').slice(0, 90));
-  await A.click('#season-dialog button');
+  // Fin de saison : la cérémonie (docs/CEREMONIE.md) remplace l'ancien dialogue ; on passe au champion.
+  await A.waitForFunction(() => !document.querySelector('#ceremony').hidden, null, { timeout: 5000 });
+  await A.tap('#cer-next');
+  await A.waitForFunction(() => document.querySelector('#ceremony').dataset.step === 'champion', null, { timeout: 3000 });
+  const dialog = await A.evaluate(() => document.querySelector('#cer-kicker').textContent + ' : ' + document.querySelector('#cer-body .cer-name')?.textContent);
+  check('fin de saison affichée (classement et champion conservés)', end.ok && /Champion de saison : (Alice|Mineur)/.test(dialog), dialog);
+  await A.tap('#cer-skip');
   await A.waitForFunction(() => window.tlb.state.season && window.tlb.state.season.name === 'Saison 2' && window.tlb.state.cube.destroyedBlocks === 0, null, { timeout: 10000 });
   const s2 = await A.evaluate(() => ({ sel: window.tlb.state.selected, hp: window.tlb.state.cube.currentHp[window.tlb.state.selected] }));
   check('nouvelle saison : surface intacte, un bloc vivant présélectionné', s2.sel !== null && s2.hp > 0);
