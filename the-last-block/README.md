@@ -44,11 +44,12 @@ npm start         # sert le client et le WebSocket sur PORT (8080)
 ## Tests
 
 ```bash
-npm test             # 155 tests Vitest (14 fichiers), ~10 s
+npm test             # 174 tests Vitest (15 fichiers), ~12 s
 npm run typecheck    # TypeScript (serveur, client, tests, scripts)
 npm run build && npm run e2e -- --rendu monolithe   # test réel : deux Chromium (mobile tactile + bureau), 31 vérifications
 npm run e2e -- --rendu classique                     # mêmes scénarios avec le rendu classique
 npm run e2e:decouvertes -- --rendu monolithe         # découvertes « Le Signal » : deux navigateurs, révélation partagée (aussi --rendu classique, --cpu 4)
+npm run e2e:missions -- --rendu monolithe            # missions du jour : deux navigateurs, coups par l'interface (aussi --rendu classique)
 npm run loadtest -- --bots 100 --seconds 15
 npm run calibrate -- --days 30 --players 200 --minutes 30
 ```
@@ -70,6 +71,7 @@ npm run calibrate -- --days 30 --players 200 --minutes 30
 | `tests/presence.test.ts` | présence observée : expiration 20 s, coups refusés ignorés, masquage, changement de couche, WebSocket |
 | `tests/labels.test.ts` | pseudos des mineurs sans chevauchement : foule dense, priorité aux alliés, zones d'interface réservées |
 | `tests/hologram.test.ts` | alertes de l'écran holographique (couche presque terminée, dernière couche, Pierre finale, annonce du Signal) |
+| `tests/missions.test.ts` | missions quotidiennes : seuils, doublons, deux joueurs, jour UTC, historique, cosmétique, aucun effet sur le jeu, redémarrage, WebSocket |
 | `tests/discoveries.test.ts` | découvertes « Le Signal » : couches déclencheuses, révélation exacte et unique, indices, fin de saison, nouvelle saison, redémarrage, réconciliation, WebSocket |
 
 Le script `npm run e2e` utilise deux navigateurs distincts : un iPhone 13 émulé, avec gestes tactiles réels via CDP, et un ordinateur. Il vérifie le glisser, le pincer, la sélection et le minage après déplacement, la synchronisation des destructions, la présence, le panneau, l'absence de chevauchement à 5 tailles d'écran, un SIGKILL du serveur, `prefers-reduced-motion`, la fin de saison, l'absence d'erreur JavaScript, et mesure les performances. Détails et résultats : [docs/REFONTE.md](docs/REFONTE.md).
@@ -104,6 +106,15 @@ Chaque couche importante du cube cache un fragment d'un message venu d'une techn
 À l'approche d'une couche qui cache un fragment, un indice discret apparaît : « Anomalie détectée », puis « Signal presque accessible ». Les fragments révélés se consultent dans le menu, onglet **Archives** (« Archives du cube »).
 
 Les textes et les profils de déclenchement se trouvent dans `server/content/discoveries.json`, et le profil se choisit avec `DISCOVERY_PROFILE` (`standard`, `mini-48h`, `none`). Détails, tests, performances et limites : [docs/DECOUVERTES.md](docs/DECOUVERTES.md).
+
+## Missions du jour
+
+Trois missions facultatives, renouvelées à 00 h UTC :
+- **Premiers impacts** : 20 coups validés ;
+- **Explorateur** : 10 blocs distincts ;
+- **Contribution collective** : frapper aujourd'hui une couche que la communauté termine aujourd'hui.
+
+La progression est calculée par le serveur, dans la transaction de chaque coup. Les récompenses sont seulement honorifiques (rang de saison visible du seul joueur) ou cosmétiques et gratuites (teinte « Signal » pour une journée complète). Rien ne change sur les dégâts, la cadence, la limite de 4 h ni le classement. Les seuils se règlent dans `server/content/missions.json`. Le panneau se trouve dans le menu, onglet **Missions**. Détails : [docs/MISSIONS.md](docs/MISSIONS.md).
 
 ## Rendu « monolithe » (par défaut)
 
