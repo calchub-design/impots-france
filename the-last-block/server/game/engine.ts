@@ -317,7 +317,7 @@ export class GameEngine {
     if (!isValidSkin(skin)) throw new GameError('invalid_skin', 'Skin inconnu.');
     const unlock = skinById(skin).unlock;
     if (unlock && !this.missions.hasUnlock(playerId, unlock)) {
-      throw new GameError('skin_locked', 'Teinte à débloquer gratuitement : accomplissez toutes les missions d\'une même journée.');
+      throw new GameError('skin_locked', 'Teinte à débloquer gratuitement : accomplissez les missions principales d\'une même journée.');
     }
     const p = this.player(playerId);
     this.store.setPlayerSkin(playerId, skin);

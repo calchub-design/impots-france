@@ -381,7 +381,9 @@ function receiveMissions(s: MissionsState | null, completed: string[] = [], unlo
   renderMissionsView();
   if (s && completed.length) {
     for (const id of completed) toast(`◈ Mission accomplie : ${s.missions.find((m) => m.id === id)?.title ?? id}`, 'good');
-    if (s.missions.every((m) => m.done)) toast('Toutes les missions du jour sont accomplies.', 'good');
+    const main = s.missions.filter((m) => !m.bonus);
+    if (s.missions.every((m) => m.done)) toast('Toutes les missions du jour sont accomplies, bonus compris.', 'good');
+    else if (main.every((m) => m.done) && main.some((m) => completed.includes(m.id))) toast('Missions principales du jour accomplies.', 'good');
   }
   if (unlocked.length && s?.reward) toast(`${s.reward.label} débloquée : à choisir dans Profil.`, 'good');
   if (unlocked.length) renderProfile();
@@ -1198,13 +1200,13 @@ function renderProfile() {
       const btn = el('button', {
         type: 'button',
         cls: `skin${state.player?.skin === s.id ? ' active' : ''}${locked ? ' locked' : ''}`,
-        title: locked ? `${s.label} : à débloquer en accomplissant toutes les missions d'une journée` : s.label,
+        title: locked ? `${s.label} : à débloquer en accomplissant les missions principales d'une journée` : s.label,
       });
       btn.style.setProperty('--c', s.color);
       btn.style.setProperty('--a', s.accent);
       btn.append(el('span', { cls: 'swatch' }), el('span', { textContent: s.label }));
       btn.addEventListener('click', () =>
-        locked ? toast(`Teinte « ${s.label} » : accomplissez toutes les missions d'une même journée pour la débloquer.`, 'info') : socket.send({ t: 'setSkin', skin: s.id }),
+        locked ? toast(`Teinte « ${s.label} » : accomplissez les missions principales d'une même journée pour la débloquer.`, 'info') : socket.send({ t: 'setSkin', skin: s.id }),
       );
       return btn;
     }),

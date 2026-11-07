@@ -26,6 +26,11 @@ export interface MissionDef {
   target: number;
   title: string;
   description: string;
+  /**
+   * Objectif bonus : il compte pour le rang de saison, mais n'est pas exigé pour la
+   * récompense quotidienne, car il dépend d'autres joueurs (ex. couche terminée le jour même).
+   */
+  bonus: boolean;
 }
 
 export interface MissionContent {
@@ -51,7 +56,8 @@ export function validateMissionContent(raw: unknown): MissionContent {
     for (const k of ['title', 'description'] as const) {
       if (typeof m[k] !== 'string' || !(m[k] as string).trim() || (m[k] as string).length > 200) throw new Error(`missions : ${k} invalide pour « ${id} »`);
     }
-    return { id, kind: m.kind as MissionKind, target: m.target as number, title: m.title as string, description: m.description as string };
+    if (m.bonus !== undefined && typeof m.bonus !== 'boolean') throw new Error(`missions : « bonus » doit être vrai ou faux pour « ${id} »`);
+    return { id, kind: m.kind as MissionKind, target: m.target as number, title: m.title as string, description: m.description as string, bonus: m.bonus === true };
   });
   const ranks = Array.isArray(r.ranks)
     ? (r.ranks as { at?: unknown; title?: unknown }[]).map((x) => {
@@ -65,6 +71,7 @@ export function validateMissionContent(raw: unknown): MissionContent {
     const d = r.dailyReward as { unlock?: unknown; label?: unknown };
     if (typeof d.unlock !== 'string' || !d.unlock || typeof d.label !== 'string' || !d.label) throw new Error('missions : récompense quotidienne invalide');
     dailyReward = { unlock: d.unlock, label: d.label };
+    if (!missions.some((m) => !m.bonus)) throw new Error('missions : la récompense quotidienne exige au moins une mission principale (non bonus)');
   }
   return { missions, ranks, dailyReward };
 }
@@ -208,7 +215,8 @@ export class MissionTracker {
       entry.done.set(m.id, now);
     }
     const reward = this.content.dailyReward;
-    if (reward && completed.length && this.content.missions.every((m) => entry.done.has(m.id))) {
+    // Récompense : toutes les missions PRINCIPALES du jour, réalisables par le joueur seul.
+    if (reward && completed.length && this.content.missions.every((m) => m.bonus || entry.done.has(m.id))) {
       if (this.store.addUnlock(playerId, reward.unlock, now)) unlocked.push(reward.unlock);
     }
     this.scratch.set(playerId, { entry, completed, unlocked });
@@ -288,6 +296,7 @@ export class MissionTracker {
       title: m.title,
       description: m.description.replace('{target}', String(m.target)),
       target: m.target,
+      ...(m.bonus ? { bonus: true } : {}),
       progress: missionProgress(m, e.p),
       done: e.done.has(m.id),
       ...(e.done.has(m.id) ? { completedAt: e.done.get(m.id) } : {}),

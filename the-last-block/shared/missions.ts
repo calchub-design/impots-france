@@ -12,6 +12,8 @@ export interface MissionView {
   title: string;
   description: string;
   target: number;
+  /** Objectif bonus : non exigé pour la récompense quotidienne. */
+  bonus?: boolean;
   /** Progression du jour, plafonnée à `target`. */
   progress: number;
   done: boolean;

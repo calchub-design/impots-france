@@ -63,7 +63,13 @@ export function renderMissions(
           'div',
           'mission-body',
           undefined,
-          h('div', 'mission-head', undefined, h('span', 'mission-title', m.title), h('span', 'mission-count', m.done ? 'Accomplie' : `${m.progress} / ${m.target}`)),
+          h(
+            'div',
+            'mission-head',
+            undefined,
+            h('span', 'mission-title', m.title, ...(m.bonus ? [h('span', 'mission-bonus', 'bonus')] : [])),
+            h('span', 'mission-count', m.done ? 'Accomplie' : `${m.progress} / ${m.target}`),
+          ),
           h('div', 'mission-desc', m.description),
           bar,
           ...(m.done && m.completedAt ? [h('div', 'mission-meta', `Accomplie à ${TIME.format(m.completedAt)}`)] : []),
@@ -76,7 +82,7 @@ export function renderMissions(
     h('div', 'rank-sub', `${s.seasonCompleted} mission${s.seasonCompleted > 1 ? 's' : ''} accomplie${s.seasonCompleted > 1 ? 's' : ''} cette saison${s.nextRank ? ` · prochain rang : ${s.nextRank.title} à ${s.nextRank.at}` : ''}`),
   ];
   if (s.reward) {
-    parts.push(h('div', `rank-reward${s.reward.unlocked ? ' unlocked' : ''}`, s.reward.unlocked ? `${s.reward.label} : débloquée (Profil)` : `${s.reward.label} : accomplissez les ${s.missions.length} missions d'une même journée`));
+    parts.push(h('div', `rank-reward${s.reward.unlocked ? ' unlocked' : ''}`, s.reward.unlocked ? `${s.reward.label} : débloquée (Profil)` : `${s.reward.label} : accomplissez les ${s.missions.filter((m) => !m.bonus).length} missions principales d'une même journée (bonus non exigé)`));
   }
   root.rank.replaceChildren(...parts);
   const titles = new Map(s.missions.map((m) => [m.id, m.title]));

@@ -19,7 +19,8 @@
       "kind": "layer-contribution",
       "target": 1,
       "title": "Contribution collective",
-      "description": "Frapper aujourd'hui une couche que la communauté termine entièrement aujourd'hui."
+      "description": "Frapper aujourd'hui une couche que la communauté termine entièrement aujourd'hui.",
+      "bonus": true
     }
   ],
   "ranks": [

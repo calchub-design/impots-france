@@ -130,6 +130,8 @@ try {
   const toasts = await A.evaluate(() => [...document.querySelectorAll('#toasts .toast')].map((t) => t.textContent).join(' | '));
   const badge2 = await A.evaluate(() => document.querySelector('#menu-missions').textContent);
   check('téléphone : notification de mission accomplie et pastille « 2/3 »', /Mission accomplie/.test(toasts) && badge2 === '2/3', `${badge2} · ${toasts.slice(0, 90)}`);
+  const early = await A.evaluate(() => ({ unlocks: window.tlb.state.missions.unlocks, layer: window.tlb.state.cube.currentLayer }));
+  check('teinte « Signal » débloquée par les missions principales, sans attendre de couche terminée', early.unlocks.includes('skin:signal') && early.layer === 0, JSON.stringify(early));
   const me = await A.evaluate(() => window.tlb.state.me);
   check('aucun effet sur le score : 20 coups comptés comme 20 coups', me.hits === 20, JSON.stringify(me));
 
@@ -163,9 +165,9 @@ try {
   const [ca, cb] = [await progress(A), await progress(B)];
   check('« Contribution collective » accomplie pour les deux joueurs à la fin de la couche', ca.endsWith('collective:1✓') && cb.endsWith('collective:1✓'), `${ca} / ${cb}`);
   const unlockedA = await A.evaluate(() => window.tlb.state.missions.unlocks);
-  check('journée complète (téléphone) : teinte « Signal » débloquée gratuitement', unlockedA.includes('skin:signal'), unlockedA.join(','));
+  check('téléphone : teinte « Signal » toujours débloquée après le bonus', unlockedA.includes('skin:signal'), unlockedA.join(','));
   const lockedB = await B.evaluate(() => document.querySelector('.skin.locked') !== null && !window.tlb.state.missions.unlocks.includes('skin:signal'));
-  check('ordinateur (journée incomplète) : teinte toujours verrouillée', lockedB);
+  check('ordinateur (missions principales incomplètes, bonus accompli) : teinte toujours verrouillée', lockedB);
 
   // 5. Choix de la teinte dans le Profil du téléphone.
   await A.tap('#menu-btn');

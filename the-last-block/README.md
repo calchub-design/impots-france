@@ -114,7 +114,7 @@ Trois missions facultatives, renouvelées à 00 h UTC :
 - **Explorateur** : 10 blocs distincts ;
 - **Contribution collective** : frapper aujourd'hui une couche que la communauté termine aujourd'hui.
 
-La progression est calculée par le serveur, dans la transaction de chaque coup. Les récompenses sont seulement honorifiques (rang de saison visible du seul joueur) ou cosmétiques et gratuites (teinte « Signal » pour une journée complète). Rien ne change sur les dégâts, la cadence, la limite de 4 h ni le classement. Les seuils se règlent dans `server/content/missions.json`. Le panneau se trouve dans le menu, onglet **Missions**. Détails : [docs/MISSIONS.md](docs/MISSIONS.md).
+La progression est calculée par le serveur, dans la transaction de chaque coup. Les récompenses sont seulement honorifiques (rang de saison visible du seul joueur) ou cosmétiques et gratuites (teinte « Signal » pour les missions principales d'une journée ; « Contribution collective » est un bonus). Rien ne change sur les dégâts, la cadence, la limite de 4 h ni le classement. Les seuils se règlent dans `server/content/missions.json`. Le panneau se trouve dans le menu, onglet **Missions**. Détails : [docs/MISSIONS.md](docs/MISSIONS.md).
 
 ## Rendu « monolithe » (par défaut)
 

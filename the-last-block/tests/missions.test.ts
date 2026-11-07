@@ -216,6 +216,34 @@ describe('missions : progression côté serveur', () => {
     expect(engine.setSkin(a, 'signal').skin).toBe('signal');
   });
 
+  it('teinte « Signal » sans aucune couche terminée : les missions principales suffisent, le bonus reste un bonus', () => {
+    const { engine, clock } = makeEngine({ ...RULES, baseHp: 50 }); // aucune couche ne peut tomber
+    engine.startSeason();
+    const ev = missionEvents(engine);
+    const a = newPlayer(engine);
+    expect(MISSION_CONTENT.missions.filter((m) => m.bonus).map((m) => m.id)).toEqual(['collective']);
+    expect(engine.missionsState(a).missions.find((m) => m.id === 'collective')!.bonus).toBe(true);
+    for (let i = 0; i < 20; i++) hit(engine, clock, a, i % 10);
+    const s = engine.missionsState(a);
+    expect(s.missions.map((m) => [m.id, m.done])).toEqual([
+      ['first-impacts', true],
+      ['explorer', true],
+      ['collective', false],
+    ]);
+    expect(s.reward).toMatchObject({ unlock: 'skin:signal', unlocked: true });
+    expect(ev.filter((e) => e.unlocked.includes('skin:signal'))).toHaveLength(1);
+    expect(engine.setSkin(a, 'signal').skin).toBe('signal');
+    // Le bonus reste compté dans le rang de saison quand il est accompli.
+    expect(s.seasonCompleted).toBe(2);
+  });
+
+  it('configuration : la récompense quotidienne exige au moins une mission principale', () => {
+    const m = { id: 'a', kind: 'hits', target: 5, title: 'A', description: 'd' };
+    expect(() => validateMissionContent({ missions: [{ ...m, bonus: true }], dailyReward: { unlock: 'x', label: 'X' } })).toThrow(/principale/);
+    expect(() => validateMissionContent({ missions: [{ ...m, bonus: 'oui' }] })).toThrow(/bonus/);
+    expect(validateMissionContent({ missions: [m, { ...m, id: 'b', bonus: true }], dailyReward: { unlock: 'x', label: 'X' } }).missions.map((x) => x.bonus)).toEqual([false, true]);
+  });
+
   it('aucun effet sur le jeu : PV, scores, classement, temps de jeu et cadence identiques avec ou sans missions', () => {
     const run = (withMissions: boolean) => {
       const { engine, clock } = makeEngine({ ...RULES, maxActionsPerSecond: 5 });

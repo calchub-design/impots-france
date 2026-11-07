@@ -10,7 +10,7 @@ Ce document couvre aussi les deux décisions de validation des découvertes (fin
 |---|---|---|
 | Premiers impacts | 20 coups validés | chaque coup accepté par le serveur |
 | Explorateur | 10 blocs distincts | blocs différents frappés dans la journée (couche + position) |
-| Contribution collective | 1 couche | couche entièrement terminée aujourd'hui, que le joueur a frappée aujourd'hui |
+| Contribution collective (**bonus**) | 1 couche | couche entièrement terminée aujourd'hui, que le joueur a frappée aujourd'hui |
 
 - **Interprétation retenue pour la contribution collective** : le joueur doit avoir frappé la couche **le même jour UTC** que celui où elle se termine. Une couche frappée la veille puis terminée aujourd'hui ne compte pas, et c'est testé. Une mission du jour demande donc d'avoir joué ce jour-là. On peut assouplir la règle à toute la saison si vous le préférez.
 - **Configuration** : seuils, textes, rangs et récompense se trouvent dans `server/content/missions.json`, validé au démarrage (types connus, seuils de 1 à 10 000, identifiants uniques, rangs croissants). Une modification s'applique au prochain démarrage du serveur.
@@ -18,7 +18,7 @@ Ce document couvre aussi les deux décisions de validation des découvertes (fin
 ## Récompenses (honorifiques et cosmétiques, gratuites)
 
 - **Rang de saison**, d'après le nombre de missions accomplies : Initié du Signal (1), Prospecteur (10), Veilleur (30), Gardien du Signal (60). Il n'est visible que du joueur, dans son panneau, et n'apparaît dans aucun classement.
-- **Teinte « Signal »** (cosmétique, permanente) : elle se débloque en accomplissant les trois missions d'une même journée. Avant, elle est affichée verrouillée dans le Profil et le serveur refuse de l'appliquer (`skin_locked`). Comme toutes les teintes, `price: null` : rien ne s'achète.
+- **Teinte « Signal »** (cosmétique, permanente) : elle se débloque en accomplissant les **missions principales** d'une même journée, c'est-à-dire « Premiers impacts » et « Explorateur », entièrement réalisables par le joueur seul. La « Contribution collective » est un **objectif bonus** : elle compte pour le rang, mais n'est pas exigée, car elle dépend de l'achèvement d'une couche ce jour-là. *(Décision de validation du 7 novembre ; modification minimale : un champ `bonus: true` dans `missions.json`.)* Avant, elle est affichée verrouillée dans le Profil et le serveur refuse de l'appliquer (`skin_locked`). Comme toutes les teintes, `price: null` : rien ne s'achète.
 - **Aucun effet sur le jeu** : rien sur les dégâts, la cadence, la limite de 4 h, le temps de jeu, le score ni le classement. Un test rejoue la même partie avec et sans missions et vérifie que résultats des coups, PV, scores, classement et temps de jeu sont identiques.
 
 ## Fonctionnement technique
@@ -29,7 +29,7 @@ Coup accepté (mine) : après les contrôles inchangés (doublon, 5 coups/s, 4 h
        ├─ bloc, journal des coups, contributions, temps de jeu (comme avant)
        ├─ missions : avancement du jour (une ligne par joueur, saison et jour)
        │    └─ mission atteinte → INSERT OR IGNORE dans mission_completions
-       │    └─ trois missions du jour → INSERT OR IGNORE dans player_unlocks (teinte)
+       │    └─ missions principales du jour → INSERT OR IGNORE dans player_unlocks (teinte)
        └─ dernier bloc d'une couche → joueurs ayant frappé cette couche aujourd'hui (daily_layer_hits)
             → « Contribution collective » pour chacun
   └─ après COMMIT : la mémoire est mise à jour, puis un message « missions » part vers le seul joueur concerné
@@ -75,7 +75,7 @@ Coup accepté (mine) : après les contrôles inchangés (doublon, 5 coups/s, 4 h
     - contribution collective, y compris pour un joueur qui n'a pas donné le dernier coup, et le cas veille / jour ;
     - **deux joueurs simultanés** ; **changement de jour UTC** ;
     - historique et nouvelle saison, rang ;
-    - teinte débloquée seulement après une journée complète ;
+    - teinte débloquée seulement après les missions principales d'une journée, y compris sans aucune couche terminée ;
     - **aucun effet sur le jeu** ;
     - nombre de lectures et d'écritures ; mémoire désynchronisée ;
     - **redémarrage** ;

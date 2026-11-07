@@ -1499,3 +1499,16 @@ body[data-renderer='monolith'] .vignette {
     transition: none;
   }
 }
+
+.mission-bonus {
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border-radius: 4px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #c9a6ff;
+  border: 1px solid rgba(190, 130, 255, 0.5);
+  vertical-align: 1px;
+}
