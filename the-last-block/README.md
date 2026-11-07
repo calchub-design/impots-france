@@ -44,12 +44,13 @@ npm start         # sert le client et le WebSocket sur PORT (8080)
 ## Tests
 
 ```bash
-npm test             # 174 tests Vitest (15 fichiers), ~12 s
+npm test             # 192 tests Vitest (16 fichiers), ~15 s
 npm run typecheck    # TypeScript (serveur, client, tests, scripts)
 npm run build && npm run e2e -- --rendu monolithe   # test réel : deux Chromium (mobile tactile + bureau), 31 vérifications
 npm run e2e -- --rendu classique                     # mêmes scénarios avec le rendu classique
 npm run e2e:decouvertes -- --rendu monolithe         # découvertes « Le Signal » : deux navigateurs, révélation partagée (aussi --rendu classique, --cpu 4)
 npm run e2e:missions -- --rendu monolithe            # missions du jour : deux navigateurs, coups par l'interface (aussi --rendu classique)
+npm run e2e:brigades -- --rendu monolithe            # objectifs de brigade : deux navigateurs + robots membres (aussi --rendu classique)
 npm run loadtest -- --bots 100 --seconds 15
 npm run calibrate -- --days 30 --players 200 --minutes 30
 ```
@@ -71,6 +72,7 @@ npm run calibrate -- --days 30 --players 200 --minutes 30
 | `tests/presence.test.ts` | présence observée : expiration 20 s, coups refusés ignorés, masquage, changement de couche, WebSocket |
 | `tests/labels.test.ts` | pseudos des mineurs sans chevauchement : foule dense, priorité aux alliés, zones d'interface réservées |
 | `tests/hologram.test.ts` | alertes de l'écran holographique (couche presque terminée, dernière couche, Pierre finale, annonce du Signal) |
+| `tests/brigades.test.ts` | objectifs de brigade : brigades de 2, 5 et 10, arrivées et départs, dissolution, doublons, aucun effet sur le jeu, redémarrage, WebSocket |
 | `tests/missions.test.ts` | missions quotidiennes : seuils, doublons, deux joueurs, jour UTC, historique, cosmétique, aucun effet sur le jeu, redémarrage, WebSocket |
 | `tests/discoveries.test.ts` | découvertes « Le Signal » : couches déclencheuses, révélation exacte et unique, indices, fin de saison, nouvelle saison, redémarrage, réconciliation, WebSocket |
 
@@ -115,6 +117,15 @@ Trois missions facultatives, renouvelées à 00 h UTC :
 - **Contribution collective** : frapper aujourd'hui une couche que la communauté termine aujourd'hui.
 
 La progression est calculée par le serveur, dans la transaction de chaque coup. Les récompenses sont seulement honorifiques (rang de saison visible du seul joueur) ou cosmétiques et gratuites (teinte « Signal » pour les missions principales d'une journée ; « Contribution collective » est un bonus). Rien ne change sur les dégâts, la cadence, la limite de 4 h ni le classement. Les seuils se règlent dans `server/content/missions.json`. Le panneau se trouve dans le menu, onglet **Missions**. Détails : [docs/MISSIONS.md](docs/MISSIONS.md).
+
+## Objectifs de brigade
+
+Trois objectifs de saison à paliers, ouverts à toutes les brigades, même de moins de 5 membres :
+- **Effort collectif** : coups des membres pour la brigade ;
+- **Tous ensemble** : membres distincts ayant donné au moins 100 coups ;
+- **Exploration du Signal** : couches terminées avec au moins 50 coups de la brigade.
+
+Une contribution appartient à la brigade du moment du coup ; elle reste acquise si le membre part. Les récompenses sont seulement honorifiques et cosmétiques : distinctions, titre de saison, cadre d'emblème. Il n'y a aucun bonus, et le championnat ne change pas. Les seuils se règlent dans `server/content/brigade-objectives.json`. Tout se trouve dans le menu, onglet **Brigade**. Détails et audit : [docs/BRIGADES.md](docs/BRIGADES.md).
 
 ## Rendu « monolithe » (par défaut)
 
