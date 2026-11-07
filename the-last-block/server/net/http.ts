@@ -122,6 +122,14 @@ export function createHttpHandler({ config, engine, stats }: HttpDeps) {
         return log ? json(res, 200, { discoveries: log }) : json(res, 404, { error: 'not_found' });
       }
 
+      // Hall des champions : archives stables des saisons terminées.
+      if (path === '/api/hall' && req.method === 'GET') return json(res, 200, { seasons: engine.hall(50) });
+      const ha = /^\/api\/hall\/(\d{1,9})$/.exec(path);
+      if (ha && req.method === 'GET') {
+        const a = engine.seasonArchive(Number(ha[1]));
+        return a ? json(res, 200, { season: a }) : json(res, 404, { error: 'not_found' });
+      }
+
       const m = /^\/api\/seasons\/(\d+)$/.exec(path);
       if (m && req.method === 'GET') {
         const r = engine.seasonResults(Number(m[1]));
@@ -151,6 +159,11 @@ export function createHttpHandler({ config, engine, stats }: HttpDeps) {
             discoveryProfile: typeof body.discoveryProfile === 'string' ? body.discoveryProfile : undefined,
           });
           return json(res, 200, { season: engine.seasonInfo(s), discoveries: engine.discoveryLog(s.id) });
+        }
+        const don = /^\/api\/admin\/season\/(\d{1,9})\/donation$/.exec(path);
+        if (don) {
+          // Confirmation du montant du don de l'éditeur (texte) ; null : « à confirmer ».
+          return json(res, 200, { season: engine.setDonationAmount(Number(don[1]), (body as { amount?: unknown }).amount ?? null) });
         }
         if (path === '/api/admin/season/end') {
           return json(res, 200, { season: engine.endSeason('admin') });

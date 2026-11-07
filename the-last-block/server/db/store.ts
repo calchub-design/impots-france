@@ -121,7 +121,7 @@ export interface GameStore {
   listSeasons(limit: number): SeasonRow[];
   getLastEndedSeason(): SeasonRow | undefined;
   createSeason(s: { name: string; cubeSize: number; baseHp: number; hpPerLayer: number; startsAt: number; endsAt: number }): SeasonRow;
-  endSeason(id: number, f: { endedAt: number; reason: 'completed' | 'timeout' | 'admin'; championPlayerId: string | null; championBrigadeId: string | null; finalStonePlayerId: string | null }): void;
+  endSeason(id: number, f: { endedAt: number; reason: 'completed' | 'timeout' | 'admin'; championPlayerId: string | null; championBrigadeId: string | null; finalStonePlayerId: string | null }): boolean;
 
   // Blocs
   loadBlockHp(seasonId: number): { layer: number; idx: number; hp: number }[];
@@ -159,6 +159,16 @@ export interface GameStore {
   listBrigades(): (BrigadeRow & { members: number })[];
 
   // Archives
+  // Archives de saison (cérémonie, Hall des champions)
+  insertSeasonArchive(seasonId: number, data: string, closedAt: number): void;
+  insertSeasonArchiveIfMissing(seasonId: number, data: string, closedAt: number): void;
+  getSeasonArchive(seasonId: number): { data: string; donation_amount: string | null } | undefined;
+  setDonationAmount(seasonId: number, amount: string | null, at: number): boolean;
+  countArchives(seasonId: number): number;
+  seasonTotals(seasonId: number): { hits: number; destroyed: number; total: number; miners: number; brigades: number };
+  playerBlocks(seasonId: number, playerId: string): number;
+  countSeasonDistinctions(seasonId: number): { n: number; b: number };
+
   // Objectifs de brigade
   getBrigadeMemberHits(seasonId: number, brigadeId: string): { player_id: string; hits: number; last_hit_at: number }[];
   addBrigadeMemberHit(seasonId: number, brigadeId: string, playerId: string, at: number): void;

@@ -64,7 +64,7 @@ export interface GameServerOptions {
 export async function startGameServer(opts: GameServerOptions): Promise<GameServer> {
   const { config } = opts;
   const store = opts.store ?? new SqliteStore(config.dbPath, { synchronous: config.security.sqliteSynchronous });
-  const engine = new GameEngine(store, config.rules, { now: opts.now });
+  const engine = new GameEngine(store, config.rules, { now: opts.now, donation: config.donation });
   const providers = createIdentityProviders(config.auth);
   engine.tick();
 
@@ -190,6 +190,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       presenceVisible: engine.presenceVisible(playerId),
       discoveries: engine.discoveryLog(),
       missions: engine.missionsState(playerId, true),
+      ceremony: engine.lastArchive(),
     };
   }
 
@@ -229,7 +230,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       }
       case 'seasonEnded':
         flushDeltas();
-        broadcast({ t: 'seasonEnded', season: e.season, nextSeasonAt: e.nextSeasonAt });
+        broadcast({ t: 'seasonEnded', season: e.season, nextSeasonAt: e.nextSeasonAt, archive: e.archive });
         // Renvoi d'un état complet (sans cube actif) à tout le monde.
         queueMicrotask(resyncAll);
         break;

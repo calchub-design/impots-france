@@ -478,3 +478,58 @@ describe('arrêt brutal (SIGKILL) et objectifs de brigade', () => {
     }
   }, 60_000);
 });
+
+describe('arrêt brutal (SIGKILL) au moment de la clôture', () => {
+  it('saison clôturée une seule fois, archive et Pierre finale conservées à l\'identique après redémarrage', async () => {
+    const db = tempDbPath();
+    cleanups.push(db.cleanup);
+    // Cube de 2 couches de 2 × 2 blocs à 1 PV : le 8e coup termine le cube et clôture la saison.
+    const env = { CUBE_SIZE: '2', BLOCK_BASE_HP: '1', BLOCK_HP_PER_LAYER: '0', SEASON_COOLDOWN_SECONDS: '3600', MAX_ACTIONS_PER_SECOND: '100' };
+    let { proc, port } = await startProcess(db.path, env);
+    const A = new TestClient(`ws://127.0.0.1:${port}/ws`);
+    const B = new TestClient(`ws://127.0.0.1:${port}/ws`);
+    await A.connect(undefined, 'Alpha');
+    await B.connect(undefined, 'Bravo');
+    for (let layer = 0; layer < 2; layer++) for (let i = 0; i < 4; i++) if (layer < 1 || i < 3) expect((await A.mine(layer, i)).ok).toBe(true);
+    // Dernier bloc frappé par les deux joueurs à la fois, puis SIGKILL immédiat.
+    A.send({ t: 'mine', actionId: 'final-alpha-xxxxxxxx', layer: 1, block: 3 });
+    B.send({ t: 'mine', actionId: 'final-bravo-xxxxxxxx', layer: 1, block: 3 });
+    await new Promise((r) => setTimeout(r, 30));
+    await kill9(proc);
+    await A.close().catch(() => {});
+    await B.close().catch(() => {});
+
+    ({ proc, port } = await startProcess(db.path, env));
+    const hall1 = (await (await fetch(`http://127.0.0.1:${port}/api/hall`)).json()).seasons;
+    await kill9(proc);
+    ({ proc, port } = await startProcess(db.path, env));
+    const hall2 = (await (await fetch(`http://127.0.0.1:${port}/api/hall`)).json()).seasons;
+    const C = new TestClient(`ws://127.0.0.1:${port}/ws`);
+    const w = await C.connect(undefined, 'Charlie');
+    await C.close();
+    await kill9(proc);
+    checkInvariants(db.path);
+
+    const raw = new DatabaseSync(db.path);
+    try {
+      const ended = raw.prepare("SELECT id, final_stone_player_id AS stone FROM seasons WHERE status = 'ended'").all() as { id: number; stone: string | null }[];
+      const archives = raw.prepare('SELECT season_id FROM season_archives').all() as { season_id: number }[];
+      const killer = raw.prepare('SELECT p.name FROM hits h JOIN players p ON p.id = h.player_id WHERE h.layer = 1 AND h.idx = 3 AND h.destroyed = 1').all() as { name: string }[];
+      // Le dernier coup a été enregistré avant l'arrêt (ou pas du tout) : dans les deux cas, état cohérent.
+      expect(killer.length).toBeLessThanOrEqual(1);
+      if (killer.length === 1) {
+        expect(ended).toHaveLength(1);
+        expect(archives.map((x) => x.season_id)).toEqual([ended[0].id]);
+        expect(hall1).toHaveLength(1);
+        expect(hall1[0]).toMatchObject({ endReason: 'completed', finalStone: { name: killer[0].name } });
+        expect(hall2).toEqual(hall1);
+        expect(w.ceremony).toEqual(hall1[0]);
+      } else {
+        expect(ended).toHaveLength(0);
+        expect(archives).toHaveLength(0);
+      }
+    } finally {
+      raw.close();
+    }
+  }, 60_000);
+});

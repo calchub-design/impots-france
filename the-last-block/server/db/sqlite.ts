@@ -204,6 +204,16 @@ CREATE TABLE IF NOT EXISTS brigade_distinctions (
   PRIMARY KEY (season_id, brigade_id, objective_id, tier)
 ) WITHOUT ROWID;
 
+-- Archive de saison (Hall des champions) : écrite UNE fois, dans la transaction de clôture.
+-- Seul le montant du don peut être confirmé ensuite (texte saisi par l'administration).
+CREATE TABLE IF NOT EXISTS season_archives (
+  season_id INTEGER PRIMARY KEY,
+  data TEXT NOT NULL,
+  closed_at INTEGER NOT NULL,
+  donation_amount TEXT,
+  donation_set_at INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS season_results (
   season_id INTEGER NOT NULL,
   kind TEXT NOT NULL,
@@ -370,14 +380,49 @@ export class SqliteStore implements GameStore {
       return this.getSeason(id)!;
     });
   }
-  endSeason(id: number, f: { endedAt: number; reason: 'completed' | 'timeout' | 'admin'; championPlayerId: string | null; championBrigadeId: string | null; finalStonePlayerId: string | null }) {
-    this.run(
+  endSeason(id: number, f: { endedAt: number; reason: 'completed' | 'timeout' | 'admin'; championPlayerId: string | null; championBrigadeId: string | null; finalStonePlayerId: string | null }): boolean {
+    return Number(this.run(
       "UPDATE seasons SET status = 'ended', ended_at = ?, end_reason = ?, champion_player_id = ?, champion_brigade_id = ?, final_stone_player_id = ? WHERE id = ? AND status = 'active'",
       f.endedAt, f.reason, f.championPlayerId, f.championBrigadeId, f.finalStonePlayerId, id,
-    );
+    ).changes) === 1;
   }
 
   // --- Blocs ---------------------------------------------------------------
+
+  // --- Archives de saison (cérémonie, Hall des champions) ----------------------
+  insertSeasonArchive(seasonId: number, data: string, closedAt: number) {
+    // INSERT simple (sans OR IGNORE) : une seconde archive pour la même saison échoue et annule la transaction.
+    this.run('INSERT INTO season_archives(season_id, data, closed_at) VALUES (?,?,?)', seasonId, data, closedAt);
+  }
+  insertSeasonArchiveIfMissing(seasonId: number, data: string, closedAt: number) {
+    this.run('INSERT OR IGNORE INTO season_archives(season_id, data, closed_at) VALUES (?,?,?)', seasonId, data, closedAt);
+  }
+  getSeasonArchive(seasonId: number) {
+    return this.get<{ data: string; donation_amount: string | null }>('SELECT data, donation_amount FROM season_archives WHERE season_id = ?', seasonId);
+  }
+  setDonationAmount(seasonId: number, amount: string | null, at: number): boolean {
+    return Number(this.run('UPDATE season_archives SET donation_amount = ?, donation_set_at = ? WHERE season_id = ?', amount, at, seasonId).changes) === 1;
+  }
+  countArchives(seasonId: number): number {
+    return this.get<{ n: number }>('SELECT COUNT(*) AS n FROM season_archives WHERE season_id = ?', seasonId)!.n;
+  }
+  seasonTotals(seasonId: number) {
+    return this.get<{ hits: number; destroyed: number; total: number; miners: number; brigades: number }>(
+      `SELECT
+         (SELECT COALESCE(SUM(hits), 0) FROM contributions WHERE season_id = ?) AS hits,
+         (SELECT COUNT(*) FROM blocks WHERE season_id = ? AND hp = 0) AS destroyed,
+         (SELECT COUNT(*) FROM blocks WHERE season_id = ?) AS total,
+         (SELECT COUNT(*) FROM contributions WHERE season_id = ? AND hits > 0) AS miners,
+         (SELECT COUNT(*) FROM brigade_contributions WHERE season_id = ? AND hits > 0) AS brigades`,
+      seasonId, seasonId, seasonId, seasonId, seasonId,
+    )!;
+  }
+  playerBlocks(seasonId: number, playerId: string): number {
+    return this.get<{ blocks: number }>('SELECT blocks FROM contributions WHERE season_id = ? AND player_id = ?', seasonId, playerId)?.blocks ?? 0;
+  }
+  countSeasonDistinctions(seasonId: number) {
+    return this.get<{ n: number; b: number }>('SELECT COUNT(*) AS n, COUNT(DISTINCT brigade_id) AS b FROM brigade_distinctions WHERE season_id = ?', seasonId)!;
+  }
 
   // --- Objectifs de brigade ----------------------------------------------------
   getBrigadeMemberHits(seasonId: number, brigadeId: string) {

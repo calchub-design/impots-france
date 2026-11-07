@@ -21,6 +21,8 @@ import type { DiscoveryFragment, DiscoveryLog } from '../../shared/discoveries.j
 import { buildDiscoveryPlan, isKnownProfile, NO_DISCOVERIES } from './discoveries.js';
 import { MissionTracker } from './missions.js';
 import { BrigadeObjectiveTracker } from './brigadeObjectives.js';
+import type { SeasonArchive } from '../../shared/ceremony.js';
+import { brigadeEmblem } from '../../shared/brigades.js';
 import type { MissionsState } from '../../shared/missions.js';
 import { generateGuestToken, hashToken, isWellFormedToken } from '../auth/guest.js';
 import { activeCredit, dayKey, nextDayStart } from './playtime.js';
@@ -60,7 +62,7 @@ export type EngineEvent =
   | { type: 'missions'; playerId: string; completed: string[]; unlocked: string[] }
   /** Progression des objectifs d'une brigade (après COMMIT) ; `unlocked` : distinctions débloquées. */
   | { type: 'brigadeProgress'; brigadeId: string; unlocked: string[] }
-  | { type: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null }
+  | { type: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null; archive: SeasonArchive }
   | { type: 'seasonStarted'; seasonId: number }
   | { type: 'brigadeChanged'; brigadeId: string; playerIds: string[] }
   | { type: 'profileChanged'; playerId: string };
@@ -101,6 +103,8 @@ interface ActiveState {
 
 export interface EngineOptions {
   now?: () => number;
+  /** Cause de la saison (association partenaire), recopiée dans l'archive à la clôture. */
+  donation?: { enabled: boolean; associationName: string; associationUrl: string; note: string };
 }
 
 const ARCHIVE_TOP = 100;
@@ -140,12 +144,15 @@ export class GameEngine {
   /** Dernier coup accepté de chaque joueur (présence observée, mémoire seulement). */
   private lastHits = new Map<string, { block: number; layer: number; at: number }>();
 
+  private readonly donation: EngineOptions['donation'];
+
   constructor(
     readonly store: GameStore,
     readonly rules: GameRules,
     opts: EngineOptions = {},
   ) {
     this.now = opts.now ?? Date.now;
+    this.donation = opts.donation;
     this.limiter = new SlidingWindowLimiter(rules.maxActionsPerSecond, rules.rateWindowMs);
     this.missions = new MissionTracker(store);
     this.brigadeObjectives = new BrigadeObjectiveTracker(store);
@@ -562,6 +569,92 @@ export class GameEngine {
     return this.store.listDiscoveries(season.id);
   }
 
+  /**
+   * Archive d'une saison terminée, construite à partir des données validées et déjà
+   * enregistrées (classement archivé, Pierre finale, découvertes révélées). Appelée dans la
+   * transaction de clôture ; pour une saison close avant cette version, à la première lecture.
+   */
+  private buildArchive(seasonId: number, closedAt: number, championBrigadeMembers?: number): SeasonArchive {
+    const s = this.store.getSeason(seasonId)!;
+    const rows = this.store.getSeasonResults(seasonId);
+    const players = rows.filter((r) => r.kind === 'player').sort((a, b) => a.rank - b.rank);
+    const podium = players.slice(0, 3).map((r) => ({ name: r.name, rank: r.rank, hits: r.score, blocks: this.store.playerBlocks(seasonId, r.entity_id) }));
+    const b = s.champion_brigade_id ? rows.find((r) => r.kind === 'brigade' && r.entity_id === s.champion_brigade_id) : undefined;
+    const totals = this.store.seasonTotals(seasonId);
+    const plan = this.store.listDiscoveries(seasonId);
+    const dist = this.store.countSeasonDistinctions(seasonId);
+    const d = this.donation;
+    const withAssociation = !!d?.enabled && !!d.associationName;
+    return {
+      seasonId,
+      number: seasonId,
+      seasonName: s.name,
+      startsAt: s.starts_at,
+      endedAt: s.ended_at ?? closedAt,
+      endReason: s.end_reason ?? 'admin',
+      closedAt,
+      champion: podium[0] ?? null,
+      podium,
+      championBrigade: b
+        ? { name: b.name, emblem: brigadeEmblem(b.name), hits: b.score, members: championBrigadeMembers ?? this.store.listMembers(b.entity_id).length }
+        : null,
+      brigadeMinSize: this.rules.brigadeMinSize,
+      finalStone: s.final_stone_player_id ? { name: this.store.getPlayer(s.final_stone_player_id)?.name ?? '—' } : null,
+      totals: { hits: totals.hits, blocksDestroyed: totals.destroyed, totalBlocks: totals.total, miners: totals.miners, brigades: totals.brigades },
+      discoveries: plan
+        .filter((f) => f.revealed_at !== null)
+        .map((f) => ({ code: f.code, title: f.title, text: f.body, layer: f.layer + 1, revealedAt: f.revealed_at! })),
+      discoveriesTotal: plan.length,
+      brigadeDistinctions: { count: dist.n, brigades: dist.b },
+      donation: {
+        associationName: withAssociation ? d!.associationName : null,
+        associationUrl: withAssociation && /^https:\/\//.test(d!.associationUrl) ? d!.associationUrl : null,
+        note: d?.note ?? '',
+        amountLabel: null,
+      },
+    };
+  }
+
+  /** Archive d'une saison terminée (null si inconnue ou encore active). Lecture seule. */
+  seasonArchive(seasonId: number): SeasonArchive | null {
+    const s = this.store.getSeason(seasonId);
+    if (!s || s.status !== 'ended') return null;
+    let row = this.store.getSeasonArchive(seasonId);
+    if (!row) {
+      // Saison close avant les archives : construite une fois à partir des résultats enregistrés.
+      this.store.insertSeasonArchiveIfMissing(seasonId, JSON.stringify(this.buildArchive(seasonId, s.ended_at ?? 0)), s.ended_at ?? 0);
+      row = this.store.getSeasonArchive(seasonId)!;
+    }
+    const a = JSON.parse(row.data) as SeasonArchive;
+    a.donation.amountLabel = row.donation_amount;
+    return a;
+  }
+
+  /** Hall des champions : saisons terminées, la plus récente d'abord. */
+  hall(limit = 50): SeasonArchive[] {
+    return this.store
+      .listSeasons(limit)
+      .filter((s) => s.status === 'ended')
+      .map((s) => this.seasonArchive(s.id)!)
+      .filter(Boolean);
+  }
+
+  /** Dernière saison terminée (pour un joueur qui revient après la fin). */
+  lastArchive(): SeasonArchive | null {
+    const s = this.store.getLastEndedSeason();
+    return s ? this.seasonArchive(s.id) : null;
+  }
+
+  /** Confirme (ou retire) le montant du don d'une saison terminée : seul champ modifiable de l'archive. */
+  setDonationAmount(seasonId: number, raw: unknown): SeasonArchive {
+    if (raw !== null && (typeof raw !== 'string' || !raw.trim() || raw.length > 60 || /[<>]/.test(raw))) {
+      throw new GameError('invalid_amount', 'Montant invalide (texte de 1 à 60 caractères, ou null pour « à confirmer »).');
+    }
+    if (!this.seasonArchive(seasonId)) throw new GameError('season_not_ended', 'Saison inconnue ou encore en cours.');
+    this.store.setDonationAmount(seasonId, raw === null ? null : (raw as string).trim(), this.now());
+    return this.seasonArchive(seasonId)!;
+  }
+
   /** Missions du jour du joueur (saison active), avec l'historique de la saison si demandé. */
   missionsState(playerId: string, history = false): MissionsState {
     return this.missions.state(playerId, this.state?.season.id ?? null, this.now(), history);
@@ -667,15 +760,18 @@ export class GameEngine {
         results.push({ season_id: st.season.id, kind: 'brigade', rank: i + 1, entity_id: b.brigadeId, name: b.name, score: b.hits });
       });
 
+    const closedAt = this.now();
+    const brigadeMembers = brigadeRanking.find((b) => b.brigadeId === championBrigade)?.members ?? 0;
+    let archive!: SeasonArchive;
     this.store.transaction(() => {
-      this.store.endSeason(st.season.id, {
-        endedAt: now,
-        reason,
-        championPlayerId: champion,
-        championBrigadeId: championBrigade,
-        finalStonePlayerId: finalStonePlayerId,
-      });
+      // Clôture unique : la mise à jour exige une saison encore active, et l'archive (clé
+      // primaire, INSERT simple) ne peut exister qu'une fois. Sinon, rien n'est écrit.
+      if (!this.store.endSeason(st.season.id, { endedAt: now, reason, championPlayerId: champion, championBrigadeId: championBrigade, finalStonePlayerId: finalStonePlayerId })) {
+        throw new GameError('season_already_ended', 'Cette saison est déjà clôturée.');
+      }
       this.store.insertSeasonResults(results);
+      archive = this.buildArchive(st.season.id, closedAt, brigadeMembers);
+      this.store.insertSeasonArchive(st.season.id, JSON.stringify(archive), closedAt);
     });
 
     this.state = null;
@@ -684,7 +780,7 @@ export class GameEngine {
     this.hitBuckets.clear();
     this.lastHits.clear();
     const info = this.seasonInfo(this.store.getSeason(st.season.id)!);
-    this.emit({ type: 'seasonEnded', season: info, nextSeasonAt: this.nextSeasonAt });
+    this.emit({ type: 'seasonEnded', season: info, nextSeasonAt: this.nextSeasonAt, archive });
     return info;
   }
 

@@ -7,6 +7,7 @@
 import type { DiscoveryFragment, DiscoveryLog } from './discoveries.js';
 import type { MissionsState } from './missions.js';
 import type { BrigadeObjectivesInfo } from './brigades.js';
+import type { SeasonArchive } from './ceremony.js';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -193,6 +194,8 @@ export interface WelcomeMessage {
   discoveries?: DiscoveryLog | null;
   /** Missions du jour (champ optionnel, compatible avec les anciens clients). */
   missions?: MissionsState;
+  /** Archive de la dernière saison terminée : cérémonie à revoir, ou en cours de diffusion. */
+  ceremony?: SeasonArchive | null;
 }
 
 export interface MineResultMessage {
@@ -247,7 +250,7 @@ export type ServerMessage =
   /** Missions du jour du joueur (avancement, mission accomplie, cosmétique débloqué, nouveau jour). */
   | { t: 'missions'; missions: MissionsState; completed?: string[]; unlocked?: string[] }
   | { t: 'token'; token: string }
-  | { t: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null }
+  | { t: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null; archive?: SeasonArchive }
   | { t: 'seasonStarted' }
   | { t: 'profile'; player: PublicPlayer; presenceVisible?: boolean }
   /** `unlocked` : distinctions de brigade qui viennent d'être débloquées (libellés). */
