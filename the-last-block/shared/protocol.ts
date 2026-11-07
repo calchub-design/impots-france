@@ -5,6 +5,7 @@
  */
 
 import type { DiscoveryFragment, DiscoveryLog } from './discoveries.js';
+import type { MissionsState } from './missions.js';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -187,6 +188,8 @@ export interface WelcomeMessage {
    * optionnel ajouté sans changer PROTOCOL_VERSION : les anciens clients l'ignorent.
    */
   discoveries?: DiscoveryLog | null;
+  /** Missions du jour (champ optionnel, compatible avec les anciens clients). */
+  missions?: MissionsState;
 }
 
 export interface MineResultMessage {
@@ -238,6 +241,8 @@ export type ServerMessage =
     }
   /** Fragment révélé (couche entièrement détruite, validée par le serveur), envoyé à tous. */
   | { t: 'discovery'; seasonId: number; fragment: DiscoveryFragment; discoveries: DiscoveryLog }
+  /** Missions du jour du joueur (avancement, mission accomplie, cosmétique débloqué, nouveau jour). */
+  | { t: 'missions'; missions: MissionsState; completed?: string[]; unlocked?: string[] }
   | { t: 'token'; token: string }
   | { t: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null }
   | { t: 'seasonStarted' }

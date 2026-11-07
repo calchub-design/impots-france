@@ -1,0 +1,35 @@
+{
+  "missions": [
+    {
+      "id": "first-impacts",
+      "kind": "hits",
+      "target": 20,
+      "title": "Premiers impacts",
+      "description": "Effectuer {target} coups de minage validés par le serveur."
+    },
+    {
+      "id": "explorer",
+      "kind": "distinct-blocks",
+      "target": 10,
+      "title": "Explorateur",
+      "description": "Frapper {target} blocs distincts."
+    },
+    {
+      "id": "collective",
+      "kind": "layer-contribution",
+      "target": 1,
+      "title": "Contribution collective",
+      "description": "Frapper aujourd'hui une couche que la communauté termine entièrement aujourd'hui."
+    }
+  ],
+  "ranks": [
+    { "at": 1, "title": "Initié du Signal" },
+    { "at": 10, "title": "Prospecteur" },
+    { "at": 30, "title": "Veilleur" },
+    { "at": 60, "title": "Gardien du Signal" }
+  ],
+  "dailyReward": {
+    "unlock": "skin:signal",
+    "label": "Teinte « Signal » (cosmétique)"
+  }
+}

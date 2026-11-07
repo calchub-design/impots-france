@@ -14,11 +14,13 @@ import {
   type SeasonProjection,
   PRESENCE_WINDOW_MS,
 } from '../../shared/protocol.js';
-import { DEFAULT_SKIN, isValidSkin } from '../../shared/skins.js';
+import { DEFAULT_SKIN, isValidSkin, skinById } from '../../shared/skins.js';
 import type { GameRules } from '../config.js';
 import type { DiscoveryRow, GameStore, SeasonResultRow, SeasonRow } from '../db/store.js';
 import type { DiscoveryFragment, DiscoveryLog } from '../../shared/discoveries.js';
 import { buildDiscoveryPlan, isKnownProfile, NO_DISCOVERIES } from './discoveries.js';
+import { MissionTracker } from './missions.js';
+import type { MissionsState } from '../../shared/missions.js';
 import { generateGuestToken, hashToken, isWellFormedToken } from '../auth/guest.js';
 import { activeCredit, dayKey, nextDayStart } from './playtime.js';
 import { SlidingWindowLimiter } from './rateLimiter.js';
@@ -53,6 +55,8 @@ export type EngineEvent =
   | { type: 'block'; seasonId: number; layer: number; block: number; hp: number; playerId: string }
   | { type: 'layer'; seasonId: number; layer: number }
   | { type: 'discovery'; seasonId: number; fragment: DiscoveryFragment }
+  /** Avancement des missions quotidiennes d'un joueur (après COMMIT). */
+  | { type: 'missions'; playerId: string; completed: string[]; unlocked: string[] }
   | { type: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null }
   | { type: 'seasonStarted'; seasonId: number }
   | { type: 'brigadeChanged'; brigadeId: string; playerIds: string[] }
@@ -115,6 +119,8 @@ export class GameEngine {
   private readonly playerCache = new Map<string, PlayerCache>();
   private state: ActiveState | null = null;
   private nextSeasonAt: number | null = null;
+  /** Missions quotidiennes individuelles (sans effet sur le jeu). */
+  readonly missions: MissionTracker;
   /** Dernier refus de création automatique de saison (configuration invalide), sinon null. */
   seasonStartError: string | null = null;
   private brigadeCache: Map<string, { name: string; members: number }> | null = null;
@@ -136,6 +142,7 @@ export class GameEngine {
   ) {
     this.now = opts.now ?? Date.now;
     this.limiter = new SlidingWindowLimiter(rules.maxActionsPerSecond, rules.rateWindowMs);
+    this.missions = new MissionTracker(store);
     const active = store.getActiveSeason();
     if (active) {
       this.loadSeason(active);
@@ -308,6 +315,10 @@ export class GameEngine {
 
   setSkin(playerId: string, skin: unknown): PublicPlayer {
     if (!isValidSkin(skin)) throw new GameError('invalid_skin', 'Skin inconnu.');
+    const unlock = skinById(skin).unlock;
+    if (unlock && !this.missions.hasUnlock(playerId, unlock)) {
+      throw new GameError('skin_locked', 'Teinte à débloquer gratuitement : accomplissez toutes les missions d\'une même journée.');
+    }
     const p = this.player(playerId);
     this.store.setPlayerSkin(playerId, skin);
     p.skin = skin;
@@ -383,6 +394,7 @@ export class GameEngine {
     const brigadeId = p.brigadeId;
     let hpAfter: number;
     let revealed: DiscoveryRow | undefined;
+    this.missions.begin();
     try {
       hpAfter = this.store.transaction(() => {
         const hp = this.store.damageBlock(st.season.id, L, B, playerId, now);
@@ -410,9 +422,13 @@ export class GameEngine {
         if (destroyed && st.layerRemaining[L] === 1 && st.discoveries.some((d) => d.layer === L && d.revealed_at === null)) {
           revealed = this.store.revealDiscovery(st.season.id, L, now, playerId);
         }
+        // Missions quotidiennes : même transaction (aucun double comptage, aucune perte au crash).
+        this.missions.onHit(st.season.id, playerId, L, B, now);
+        if (destroyed && st.layerRemaining[L] === 1) this.missions.onLayerCompleted(st.season.id, L, now);
         return hp;
       });
     } catch (err) {
+      this.missions.abort();
       if (err instanceof AlreadyDestroyed) {
         st.hp[cell] = 0;
         return { ok: false, reason: 'already_destroyed' };
@@ -437,7 +453,9 @@ export class GameEngine {
     if (brigadeId) bump(st.brigades, brigadeId, destroyed, now);
     this.rankDirty = true;
 
+    const missionUpdates = this.missions.commit();
     this.emit({ type: 'block', seasonId: st.season.id, layer: L, block: B, hp: hpAfter, playerId });
+    for (const u of missionUpdates) this.emit({ type: 'missions', playerId: u.playerId, completed: u.completed, unlocked: u.unlocked });
     if (revealed) {
       const row = revealed;
       const i = st.discoveries.findIndex((d) => d.fragment_id === row.fragment_id);
@@ -525,6 +543,11 @@ export class GameEngine {
     }
     this.store.reconcileDiscoveries(season.id);
     return this.store.listDiscoveries(season.id);
+  }
+
+  /** Missions du jour du joueur (saison active), avec l'historique de la saison si demandé. */
+  missionsState(playerId: string, history = false): MissionsState {
+    return this.missions.state(playerId, this.state?.season.id ?? null, this.now(), history);
   }
 
   /**

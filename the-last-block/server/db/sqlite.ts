@@ -131,6 +131,43 @@ CREATE TABLE IF NOT EXISTS discoveries (
   UNIQUE (season_id, layer)
 ) WITHOUT ROWID;
 
+-- Missions quotidiennes : avancement du jour (une ligne par joueur, saison et jour UTC),
+-- écrit dans la transaction du coup, jusqu'à ce que les objectifs du jour soient atteints.
+CREATE TABLE IF NOT EXISTS daily_missions (
+  season_id INTEGER NOT NULL,
+  player_id TEXT NOT NULL,
+  day TEXT NOT NULL,
+  hits INTEGER NOT NULL DEFAULT 0,
+  blocks TEXT NOT NULL DEFAULT '[]',
+  layers TEXT NOT NULL DEFAULT '[]',
+  layers_done INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (season_id, player_id, day)
+) WITHOUT ROWID;
+-- Qui a frappé quelle couche, quel jour (lu une seule fois, quand la couche est terminée).
+CREATE TABLE IF NOT EXISTS daily_layer_hits (
+  season_id INTEGER NOT NULL,
+  day TEXT NOT NULL,
+  layer INTEGER NOT NULL,
+  player_id TEXT NOT NULL,
+  PRIMARY KEY (season_id, day, layer, player_id)
+) WITHOUT ROWID;
+-- Historique des missions accomplies (une fois par joueur, jour et mission).
+CREATE TABLE IF NOT EXISTS mission_completions (
+  season_id INTEGER NOT NULL,
+  player_id TEXT NOT NULL,
+  day TEXT NOT NULL,
+  mission_id TEXT NOT NULL,
+  completed_at INTEGER NOT NULL,
+  PRIMARY KEY (season_id, player_id, day, mission_id)
+) WITHOUT ROWID;
+-- Éléments cosmétiques gratuits débloqués (permanents).
+CREATE TABLE IF NOT EXISTS player_unlocks (
+  player_id TEXT NOT NULL,
+  unlock_id TEXT NOT NULL,
+  unlocked_at INTEGER NOT NULL,
+  PRIMARY KEY (player_id, unlock_id)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS season_results (
   season_id INTEGER NOT NULL,
   kind TEXT NOT NULL,
@@ -305,6 +342,51 @@ export class SqliteStore implements GameStore {
   }
 
   // --- Blocs ---------------------------------------------------------------
+
+  // --- Missions quotidiennes --------------------------------------------------
+  getDailyMissions(seasonId: number, playerId: string, day: string) {
+    return this.get<{ hits: number; blocks: string; layers: string; layers_done: number }>(
+      'SELECT hits, blocks, layers, layers_done FROM daily_missions WHERE season_id = ? AND player_id = ? AND day = ?',
+      seasonId, playerId, day,
+    );
+  }
+  saveDailyMissions(seasonId: number, playerId: string, day: string, hits: number, blocks: string, layers: string, layersDone: number) {
+    this.run(
+      `INSERT INTO daily_missions(season_id, player_id, day, hits, blocks, layers, layers_done) VALUES (?,?,?,?,?,?,?)
+       ON CONFLICT(season_id, player_id, day) DO UPDATE SET hits = excluded.hits, blocks = excluded.blocks, layers = excluded.layers, layers_done = excluded.layers_done`,
+      seasonId, playerId, day, hits, blocks, layers, layersDone,
+    );
+  }
+  listMissionCompletions(seasonId: number, playerId: string, day: string) {
+    return this.all<{ mission_id: string; completed_at: number }>(
+      'SELECT mission_id, completed_at FROM mission_completions WHERE season_id = ? AND player_id = ? AND day = ?',
+      seasonId, playerId, day,
+    );
+  }
+  insertMissionCompletion(seasonId: number, playerId: string, day: string, missionId: string, at: number): boolean {
+    return Number(this.run('INSERT OR IGNORE INTO mission_completions(season_id, player_id, day, mission_id, completed_at) VALUES (?,?,?,?,?)', seasonId, playerId, day, missionId, at).changes) > 0;
+  }
+  countMissionCompletions(seasonId: number, playerId: string): number {
+    return this.get<{ n: number }>('SELECT COUNT(*) AS n FROM mission_completions WHERE season_id = ? AND player_id = ?', seasonId, playerId)!.n;
+  }
+  listSeasonMissionCompletions(seasonId: number, playerId: string, limit: number) {
+    return this.all<{ day: string; mission_id: string }>(
+      'SELECT day, mission_id FROM mission_completions WHERE season_id = ? AND player_id = ? ORDER BY day DESC, completed_at LIMIT ?',
+      seasonId, playerId, limit,
+    );
+  }
+  addDailyLayerHit(seasonId: number, day: string, layer: number, playerId: string) {
+    this.run('INSERT OR IGNORE INTO daily_layer_hits(season_id, day, layer, player_id) VALUES (?,?,?,?)', seasonId, day, layer, playerId);
+  }
+  dailyLayerPlayers(seasonId: number, day: string, layer: number): string[] {
+    return this.all<{ player_id: string }>('SELECT player_id FROM daily_layer_hits WHERE season_id = ? AND day = ? AND layer = ?', seasonId, day, layer).map((r) => r.player_id);
+  }
+  addUnlock(playerId: string, unlockId: string, at: number): boolean {
+    return Number(this.run('INSERT OR IGNORE INTO player_unlocks(player_id, unlock_id, unlocked_at) VALUES (?,?,?)', playerId, unlockId, at).changes) > 0;
+  }
+  listUnlocks(playerId: string): string[] {
+    return this.all<{ unlock_id: string }>('SELECT unlock_id FROM player_unlocks WHERE player_id = ? ORDER BY unlocked_at', playerId).map((r) => r.unlock_id);
+  }
 
   // --- Découvertes ----------------------------------------------------------
   setSeasonDiscoveries(seasonId: number, profile: string, error: string | null, rows: Omit<DiscoveryRow, 'season_id' | 'revealed_at' | 'closing_player_id'>[]) {

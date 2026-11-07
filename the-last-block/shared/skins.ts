@@ -11,6 +11,11 @@ export interface SkinDef {
   color: string;
   accent: string;
   price: null;
+  /**
+   * Teinte à débloquer gratuitement (ex. « skin:signal » : toutes les missions d'une journée).
+   * Jamais achetable.
+   */
+  unlock?: string;
 }
 
 export const SKINS: readonly SkinDef[] = [
@@ -20,6 +25,7 @@ export const SKINS: readonly SkinDef[] = [
   { id: 'jade', label: 'Jade', color: '#5be39a', accent: '#145c38', price: null },
   { id: 'amethyst', label: 'Améthyste', color: '#c18cff', accent: '#4b2580', price: null },
   { id: 'chalk', label: 'Craie', color: '#f4f1ea', accent: '#6d6a63', price: null },
+  { id: 'signal', label: 'Signal', color: '#8ff0ff', accent: '#6a3bc4', price: null, unlock: 'skin:signal' },
 ];
 
 export const DEFAULT_SKIN = 'classic';

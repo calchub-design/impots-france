@@ -368,3 +368,51 @@ describe('arrêt brutal (SIGKILL) et découvertes collectives', () => {
     }
   }, 60_000);
 });
+
+describe('arrêt brutal (SIGKILL) et missions quotidiennes', () => {
+  it('avancement = coups réellement enregistrés aujourd\'hui, missions enregistrées une seule fois, après SIGKILL', async () => {
+    const db = tempDbPath();
+    cleanups.push(db.cleanup);
+    const env = { CUBE_SIZE: '4', BLOCK_BASE_HP: '50', BLOCK_HP_PER_LAYER: '0', MAX_ACTIONS_PER_SECOND: '100' };
+    let { proc, port } = await startProcess(db.path, env);
+    const A = new TestClient(`ws://127.0.0.1:${port}/ws`);
+    const w = await A.connect(undefined, 'Kilo');
+    const pid = w.player.id;
+    for (let i = 0; i < 12; i++) expect((await A.mine(0, i)).ok).toBe(true);
+    // Rafale sans attendre les réponses (dont des doublons), puis SIGKILL en plein vol.
+    for (let i = 0; i < 14; i++) A.send({ t: 'mine', actionId: `kill-${i % 10}-xxxxxxxx`, layer: 0, block: 12 + (i % 4) });
+    await new Promise((r) => setTimeout(r, 10));
+    await kill9(proc);
+    await A.close().catch(() => {});
+
+    ({ proc, port } = await startProcess(db.path, env));
+    const A2 = new TestClient(`ws://127.0.0.1:${port}/ws`);
+    const w2 = await A2.connect(A.token);
+    expect(w2.player.id).toBe(pid);
+    const raw = new DatabaseSync(db.path);
+    const hits = (raw.prepare('SELECT COUNT(*) AS n FROM hits WHERE player_id = ?').get(pid) as { n: number }).n;
+    const distinct = (raw.prepare('SELECT COUNT(DISTINCT layer || \':\' || idx) AS n FROM hits WHERE player_id = ?').get(pid) as { n: number }).n;
+    const done = raw.prepare('SELECT mission_id, COUNT(*) AS n FROM mission_completions WHERE player_id = ? GROUP BY mission_id').all(pid) as { mission_id: string; n: number }[];
+    raw.close();
+    const m = (id: string) => w2.missions!.missions.find((x) => x.id === id)!;
+    expect(hits).toBeGreaterThanOrEqual(12);
+    expect(hits).toBeLessThanOrEqual(22); // 12 + au plus 10 actions distinctes de la rafale
+    expect(m('first-impacts').progress).toBe(Math.min(20, hits));
+    expect(m('explorer').progress).toBe(Math.min(10, distinct));
+    expect(m('explorer').done).toBe(true);
+    for (const d of done) expect(d.n).toBe(1);
+    expect(done.map((d) => d.mission_id).sort()).toEqual(hits >= 20 ? ['explorer', 'first-impacts'] : ['explorer']);
+    // Les coups de la rafale renvoyés après la reprise ne comptent pas une seconde fois.
+    for (let i = 0; i < 10; i++) await A2.mine(0, 12 + (i % 4), `kill-${i}-xxxxxxxx`);
+    const raw2 = new DatabaseSync(db.path);
+    const hits2 = (raw2.prepare('SELECT COUNT(*) AS n FROM hits WHERE player_id = ?').get(pid) as { n: number }).n;
+    raw2.close();
+    await A2.close();
+    const A3 = new TestClient(`ws://127.0.0.1:${port}/ws`);
+    const w3 = await A3.connect(A.token);
+    expect(w3.missions!.missions.find((x) => x.id === 'first-impacts')!.progress).toBe(Math.min(20, hits2));
+    await A3.close();
+    await kill9(proc);
+    checkInvariants(db.path);
+  }, 60_000);
+});

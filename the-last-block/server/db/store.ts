@@ -159,6 +159,19 @@ export interface GameStore {
   listBrigades(): (BrigadeRow & { members: number })[];
 
   // Archives
+  // Missions quotidiennes
+  getDailyMissions(seasonId: number, playerId: string, day: string): { hits: number; blocks: string; layers: string; layers_done: number } | undefined;
+  saveDailyMissions(seasonId: number, playerId: string, day: string, hits: number, blocks: string, layers: string, layersDone: number): void;
+  listMissionCompletions(seasonId: number, playerId: string, day: string): { mission_id: string; completed_at: number }[];
+  /** Vrai si la mission vient d'être enregistrée (faux si elle l'était déjà ce jour-là). */
+  insertMissionCompletion(seasonId: number, playerId: string, day: string, missionId: string, at: number): boolean;
+  countMissionCompletions(seasonId: number, playerId: string): number;
+  listSeasonMissionCompletions(seasonId: number, playerId: string, limit: number): { day: string; mission_id: string }[];
+  addDailyLayerHit(seasonId: number, day: string, layer: number, playerId: string): void;
+  dailyLayerPlayers(seasonId: number, day: string, layer: number): string[];
+  addUnlock(playerId: string, unlockId: string, at: number): boolean;
+  listUnlocks(playerId: string): string[];
+
   // Découvertes collectives
   setSeasonDiscoveries(seasonId: number, profile: string, error: string | null, rows: Omit<DiscoveryRow, 'season_id' | 'revealed_at' | 'closing_player_id'>[]): void;
   listDiscoveries(seasonId: number): DiscoveryRow[];

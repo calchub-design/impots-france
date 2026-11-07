@@ -16,6 +16,7 @@ import type { GameStore } from '../db/store.js';
 import { GameEngine, type EngineEvent } from '../game/engine.js';
 import { SlidingWindowLimiter } from '../game/rateLimiter.js';
 import { GameError } from '../game/validation.js';
+import { dayKey } from '../game/playtime.js';
 import { createHttpHandler } from './http.js';
 import { clientIp } from './ip.js';
 
@@ -48,6 +49,8 @@ export interface GameServer {
   port: number;
   close(): Promise<void>;
   stats(): Record<string, unknown>;
+  /** Changement de jour UTC : renvoie les missions remises à zéro aux joueurs connectés (appelé chaque seconde). */
+  checkDayRollover(): void;
 }
 
 export interface GameServerOptions {
@@ -176,6 +179,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       presence: engine.presence(),
       presenceVisible: engine.presenceVisible(playerId),
       discoveries: engine.discoveryLog(),
+      missions: engine.missionsState(playerId, true),
     };
   }
 
@@ -196,6 +200,15 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
         // Le coup qui achève la couche part d'abord, puis la découverte, à tous.
         flushDeltas();
         broadcast({ t: 'discovery', seasonId: e.seasonId, fragment: e.fragment, discoveries: engine.discoveryLog(e.seasonId)! });
+        break;
+      case 'missions':
+        // Avancement personnel : seulement au joueur concerné (historique joint si une mission est accomplie).
+        toPlayer(e.playerId, () => ({
+          t: 'missions',
+          missions: engine.missionsState(e.playerId, e.completed.length > 0),
+          ...(e.completed.length ? { completed: e.completed } : {}),
+          ...(e.unlocked.length ? { unlocked: e.unlocked } : {}),
+        }));
         break;
       case 'layer': {
         flushDeltas();
@@ -426,6 +439,15 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
     ws.on('error', () => detach(c));
   });
 
+  let currentDay = dayKey(engine.now());
+  function checkDayRollover() {
+    const day = dayKey(engine.now());
+    if (day === currentDay) return;
+    currentDay = day;
+    // 00 h UTC : nouvelles missions pour tous les joueurs connectés.
+    for (const pid of byPlayer.keys()) toPlayer(pid, () => ({ t: 'missions', missions: engine.missionsState(pid, true) }));
+  }
+
   const timers: NodeJS.Timeout[] = [];
   if (!opts.manualTick) {
     timers.push(setInterval(flushDeltas, DELTA_FLUSH_MS));
@@ -434,6 +456,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       setInterval(() => {
         try {
           engine.tick();
+          checkDayRollover();
         } catch (err) {
           console.error('[tick]', err);
         }
@@ -470,6 +493,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
     store,
     port,
     stats,
+    checkDayRollover,
     async close() {
       for (const t of timers) clearInterval(t);
       flushDeltas();
