@@ -44,13 +44,14 @@ npm start         # sert le client et le WebSocket sur PORT (8080)
 ## Tests
 
 ```bash
-npm test             # 192 tests Vitest (16 fichiers), ~15 s
+npm test             # 205 tests Vitest (17 fichiers), ~20 s
 npm run typecheck    # TypeScript (serveur, client, tests, scripts)
 npm run build && npm run e2e -- --rendu monolithe   # test réel : deux Chromium (mobile tactile + bureau), 31 vérifications
 npm run e2e -- --rendu classique                     # mêmes scénarios avec le rendu classique
 npm run e2e:decouvertes -- --rendu monolithe         # découvertes « Le Signal » : deux navigateurs, révélation partagée (aussi --rendu classique, --cpu 4)
 npm run e2e:missions -- --rendu monolithe            # missions du jour : deux navigateurs, coups par l'interface (aussi --rendu classique)
 npm run e2e:brigades -- --rendu monolithe            # objectifs de brigade : deux navigateurs + robots membres (aussi --rendu classique)
+npm run e2e:ceremonie -- --rendu monolithe           # cérémonie de fin de saison et Hall des champions (aussi --rendu classique, --cpu 4)
 npm run loadtest -- --bots 100 --seconds 15
 npm run calibrate -- --days 30 --players 200 --minutes 30
 ```
@@ -72,6 +73,7 @@ npm run calibrate -- --days 30 --players 200 --minutes 30
 | `tests/presence.test.ts` | présence observée : expiration 20 s, coups refusés ignorés, masquage, changement de couche, WebSocket |
 | `tests/labels.test.ts` | pseudos des mineurs sans chevauchement : foule dense, priorité aux alliés, zones d'interface réservées |
 | `tests/hologram.test.ts` | alertes de l'écran holographique (couche presque terminée, dernière couche, Pierre finale, annonce du Signal) |
+| `tests/ceremony.test.ts` | cérémonie et Hall : clôture unique (dernier bloc simultané), échéance, clôture administrative, sans contribution, brigade non qualifiée, archive figée, redémarrage, WebSocket et HTTP |
 | `tests/brigades.test.ts` | objectifs de brigade : brigades de 2, 5 et 10, arrivées et départs, dissolution, doublons, aucun effet sur le jeu, redémarrage, WebSocket |
 | `tests/missions.test.ts` | missions quotidiennes : seuils, doublons, deux joueurs, jour UTC, historique, cosmétique, aucun effet sur le jeu, redémarrage, WebSocket |
 | `tests/discoveries.test.ts` | découvertes « Le Signal » : couches déclencheuses, révélation exacte et unique, indices, fin de saison, nouvelle saison, redémarrage, réconciliation, WebSocket |
@@ -127,6 +129,18 @@ Trois objectifs de saison à paliers, ouverts à toutes les brigades, même de m
 
 Une contribution appartient à la brigade du moment du coup ; elle reste acquise si le membre part. Les récompenses sont seulement honorifiques et cosmétiques : distinctions, titre de saison, cadre d'emblème. Il n'y a aucun bonus, et le championnat ne change pas. Les seuils se règlent dans `server/content/brigade-objectives.json`. Tout se trouve dans le menu, onglet **Brigade**. Détails et audit : [docs/BRIGADES.md](docs/BRIGADES.md).
 
+## Cérémonie de fin de saison et Hall des champions
+
+Quelle que soit la cause de la fin (dernier bloc, échéance ou administration), tous les joueurs connectés voient la même séquence de 41 s, synchronisée sur l'horloge du serveur et passable à tout moment. Elle présente :
+- le silence du cube ;
+- le champion ;
+- la brigade championne ;
+- la Pierre finale ;
+- les fragments réellement révélés ;
+- la cause de la saison (« Montant du don à confirmer », jamais une récompense du champion).
+
+Les résultats sont archivés une seule fois, dans la transaction de clôture. On les retrouve dans le menu, onglet **Saisons** → Hall des champions, où chaque cérémonie peut être revue. Détails : [docs/CEREMONIE.md](docs/CEREMONIE.md).
+
 ## Rendu « monolithe » (par défaut)
 
 Le cube est rendu en **vraie perspective** : une vue de minage où la surface fuit vers l'horizon, et une **vue monumentale** (▦ ou V, ou en pinçant vers l'arrière) qui montre le monolithe entier suspendu dans le vide cosmique. L'univers est futuriste et mystérieux : pierre-tech, lignes d'énergie, glyphes gravés, fissures lumineuses. Le rendu classique, plus léger, reste disponible (Profil → Rendu du cube, ou `?rendu=classique`) et sert de repli automatique sur les appareils trop lents. Détails, compromis, performances mesurées et captures : [étape 1](docs/REFONTE-MONOLITHE.md) (gigantisme, identité futuriste) et [étape 2](docs/REFONTE-MONOLITHE-2.md) (écran holographique, présence, mobile, repli en cours de session).
@@ -163,6 +177,8 @@ the-last-block/
 | GET | `/api/stats` | Compteurs (connexions, refus, coups, mémoire) — à protéger en production |
 | GET | `/api/seasons` | Saisons (en cours et archivées) avec champion, brigade, Pierre finale, avance éventuelle |
 | GET | `/api/seasons/:id` | Classement final archivé |
+| GET | `/api/hall`, `/api/hall/:id` | Hall des champions : archives stables des saisons terminées |
+| POST | `/api/admin/season/:id/donation` | `{amount: "500 €" \| null}` : confirme le montant du don de l'éditeur (sinon « Montant du don à confirmer ») |
 | GET | `/api/discoveries[?season=id]` | Archives du cube (saison en cours ou demandée) ; fragments verrouillés sans titre ni texte |
 | GET | `/api/season/projection` | Avancement et date de fin estimée de la saison en cours |
 | POST | `/api/admin/season/start` | `{name?, cubeSize?, durationHours?, baseHp?, hpPerLayer?, discoveryProfile?}` — `Authorization: Bearer $ADMIN_TOKEN` |
