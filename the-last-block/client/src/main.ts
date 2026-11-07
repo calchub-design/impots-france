@@ -401,11 +401,20 @@ setInterval(() => {
 // ---------------------------------------------------------------------------
 
 const ceremony = new CeremonyPlayer($('#ceremony'), () => reducedMotion, (name) => brigadeColor(name));
-ceremony.onClose = (a) => storageSet('tlb.ceremony.seen', String(a.seasonId));
+ceremony.onClose = (a) => {
+  storageSet('tlb.ceremony.seen', String(a.seasonId));
+  // Les notifications retenues pendant la cérémonie s'affichent maintenant (les 3 dernières).
+  for (const [text, kind] of deferredToasts.splice(0).slice(-3)) toast(text, kind);
+};
 
 function playCeremony(a: SeasonArchive, elapsedMs: number) {
   closePanel();
   revealOverlay.hide();
+  // Notifications déjà à l'écran (ex. mission accomplie par le dernier coup) : reportées après la cérémonie.
+  for (const t of [...document.querySelectorAll<HTMLElement>('#toasts .toast')]) {
+    deferredToasts.push([t.textContent ?? '', t.classList.contains('good') ? 'good' : t.classList.contains('bad') ? 'bad' : 'info']);
+    t.remove();
+  }
   ceremony.play(a, elapsedMs);
 }
 
@@ -1447,7 +1456,14 @@ $('#reset-profile').addEventListener('click', () => {
 // Divers
 // ---------------------------------------------------------------------------
 
+/** Notifications retenues pendant la cérémonie (affichées à sa fermeture, pour ne pas la concurrencer). */
+const deferredToasts: [string, 'good' | 'bad' | 'info'][] = [];
+
 function toast(text: string, kind: 'good' | 'bad' | 'info' = 'info') {
+  if (document.querySelector<HTMLElement>('#ceremony')?.hidden === false) {
+    deferredToasts.push([text, kind]);
+    return;
+  }
   placeToasts(); // géométrie à jour (bandeau, mini-carte) au moment d'afficher
   const box = $('#toasts');
   const t = el('div', { cls: `toast ${kind}`, textContent: text });
@@ -1471,9 +1487,23 @@ function countdownText(): string {
   return 'en attente';
 }
 
+/**
+ * Barre du haut : version courte, qui tient sur une ligne même à 360 px
+ * (« Intersaison · reprise 59 min ») ; la phrase complète reste en info-bulle.
+ */
+function topbarCountdown(): string {
+  const now = serverNow();
+  if (state.season) return `fin dans ${fmtDuration(state.season.endsAt - now)}`;
+  if (state.nextSeasonAt) {
+    const ms = state.nextSeasonAt - now;
+    return `reprise ${ms >= 60_000 ? fmtDuration(ms).replace(/ \d+ s$/, '') : fmtDuration(ms)}`;
+  }
+  return 'en attente';
+}
+
 setInterval(() => {
-  const text = countdownText();
-  $('#countdown').textContent = text;
+  $('#countdown').textContent = topbarCountdown();
+  $('.season-line').title = `${state.season?.name ?? 'Intersaison'} · ${countdownText()}`;
 }, 500);
 
 function haptic(ms: number) {
