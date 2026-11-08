@@ -7,4 +7,5 @@ data/
 .env
 coverage/
 !.env.example
+!.env.beta.example
 e2e-output/
