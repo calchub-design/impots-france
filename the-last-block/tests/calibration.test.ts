@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../server/config.js';
 import type { EngineEvent } from '../server/game/engine.js';
-import { calibrate, totalHits } from '../shared/calibration.js';
+import { BETA_SCENARIOS, calibrate, calibrateShortSeason, evaluateSeason, hitsPerHour, theoreticalMaxHits, totalHits } from '../shared/calibration.js';
 import { aid, makeEngine, newPlayer } from './helpers.js';
 
 const DAY = 24 * 3600_000;
@@ -133,5 +133,44 @@ describe('calibrage des saisons', () => {
     const second = engine.activeSeason!;
     expect(second.name).toBe('Saison 2');
     expect(second.ends_at - second.starts_at).toBe(30 * DAY);
+  });
+});
+
+describe('calibrage de la bêta 48 h', () => {
+  const scen = (id: string) => BETA_SCENARIOS.find((s) => s.id === id)!;
+
+  it('chaque préréglage termine vers la 36e heure dans le scénario sur lequel il est calé', () => {
+    for (const [id, invited] of [['faible', 15], ['moyenne', 15], ['moyenne', 20], ['forte', 20]] as const) {
+      for (const cubeSize of [12, 16]) {
+        const p = calibrateShortSeason({ invited, scenario: scen(id), cubeSize });
+        const o = evaluateSeason(p, invited, scen(id));
+        expect(o.risk, `${id}/${invited}/${cubeSize}`).toBe('dans_la_fenetre');
+        expect(o.finishHour!).toBeGreaterThan(48 * 0.6);
+        expect(o.finishHour!).toBeLessThan(48 * 0.9);
+        expect(p.durationHours).toBe(48);
+      }
+    }
+  });
+
+  it('documente les deux risques : un préréglage central ne couvre pas les extrêmes', () => {
+    const p = calibrateShortSeason({ invited: 15, scenario: scen('moyenne'), cubeSize: 12 });
+    expect(evaluateSeason(p, 15, scen('faible')).risk).toBe('non_termine');
+    expect(evaluateSeason(p, 15, scen('faible')).progressAtEndPct).toBeLessThan(50);
+    expect(evaluateSeason(p, 20, scen('forte')).risk).toBe('trop_tot');
+    expect(evaluateSeason(p, 20, scen('forte')).finishHour!).toBeLessThan(24);
+  });
+
+  it('seuils de risque et borne haute théorique', () => {
+    const s = { id: 'x', label: 'x', activeShare: 1, minutesPerDay: 24, hitsPerSecond: 1 }; // 1 joueur, 24 min/jour → 1 440 coups/jour
+    expect(hitsPerHour(1, s)).toBe(60); // 24 min × 60 s ÷ 24 h
+    const params = (total: number) => ({ cubeSize: 1, baseHp: total, hpPerLayer: 0, durationHours: 48 });
+    expect(evaluateSeason(params(60 * 20), 1, s).risk).toBe('trop_tot');
+    expect(evaluateSeason(params(60 * 30), 1, s).risk).toBe('dans_la_fenetre');
+    expect(evaluateSeason(params(60 * 46), 1, s).risk).toBe('juste');
+    const late = evaluateSeason(params(60 * 96), 1, s);
+    expect(late).toMatchObject({ risk: 'non_termine', finishHour: null, progressAtEndPct: 50 });
+    // 48 h hors minuit UTC = 3 jours UTC = 12 h de jeu maximum ; à minuit = 8 h.
+    expect(theoreticalMaxHits(20)).toBe(20 * 12 * 3600 * 5);
+    expect(theoreticalMaxHits(20, 48, true)).toBe(20 * 8 * 3600 * 5);
   });
 });

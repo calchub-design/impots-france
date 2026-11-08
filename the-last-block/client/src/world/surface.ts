@@ -3,6 +3,7 @@ import { hash2, toXY, visibleRange, type FaceData } from './face.js';
 import { attachGestures, type PointerKind } from './gestures.js';
 import { shade, strataColor } from './palette.js';
 import type { ViewCamera, WorldView } from './view.js';
+import { drawCenteredMessage } from './labels.js';
 
 /**
  * Rendu Canvas 2D de la face jouable vue par la caméra.
@@ -303,10 +304,7 @@ export class SurfaceView implements WorldView {
       ctx.fillStyle = 'rgba(8,10,22,0.55)';
       ctx.fillRect(0, 0, this.w, this.h);
       ctx.fillStyle = '#ffe08a';
-      ctx.font = `600 ${Math.max(14, Math.min(20, this.w / 26))}px system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(this.state.message ?? 'Reconnexion… (état figé)', this.w / 2, this.h / 2);
+      drawCenteredMessage(ctx, this.state.message ?? 'Reconnexion… (état figé)', this.w, this.h);
     }
   }
 

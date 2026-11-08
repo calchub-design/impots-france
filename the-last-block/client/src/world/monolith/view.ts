@@ -6,6 +6,7 @@ import type { WorldView } from '../view.js';
 import { ACTIVE_RATE, GLYPHS, PALETTE, RUNE_RATE, VEIN_RATE, css, layerColor, mix, plateNoise, scale, type RGB } from './material.js';
 import { paintHologram, type HoloData } from './hologram.js';
 import { PerspectiveCamera, type Pose, type Vec3 } from './persp.js';
+import { drawCenteredMessage } from '../labels.js';
 
 /**
  * Rendu « monolithe » : le cube colossal en vraie perspective (Canvas 2D).
@@ -409,10 +410,7 @@ export class MonolithView implements WorldView {
       ctx.fillStyle = 'rgba(4,5,13,0.6)';
       ctx.fillRect(0, 0, this.w, this.h);
       ctx.fillStyle = PALETTE.cyanSoft;
-      ctx.font = `600 ${Math.max(14, Math.min(20, this.w / 26))}px system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(this.state.message ?? 'Liaison perdue — reconnexion…', this.w / 2, this.h / 2);
+      drawCenteredMessage(ctx, this.state.message ?? 'Liaison perdue — reconnexion…', this.w, this.h);
     }
   }
 

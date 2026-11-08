@@ -1,0 +1,13 @@
+# /etc/systemd/system/the-last-block-backup.service — EXEMPLE NON DÉPLOYÉ
+# Sauvegarde à chaud vérifiée (VACUUM INTO + integrity_check), serveur en marche.
+[Unit]
+Description=Sauvegarde de la base The Last Block (bêta)
+
+[Service]
+Type=oneshot
+User=lastblock
+WorkingDirectory=/opt/the-last-block
+EnvironmentFile=/etc/the-last-block/beta.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning scripts/backup.mjs
+# Conservation : 14 jours de sauvegardes (voir docs/BETA-48H.md, données et conservation).
+ExecStartPost=/usr/bin/find /var/lib/the-last-block/backups -name 'lastblock-*.sqlite' -mtime +14 -delete

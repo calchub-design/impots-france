@@ -131,12 +131,14 @@ export class GameSocket {
         this.onState('replaced');
         return;
       }
-      this.onState('offline');
-      if (this.closedByUser) return;
+      if (this.closedByUser) return this.onState('offline');
       // Refus de politique (ex. trop de comptes créés) : on espace fortement.
       if (ev.code === 1008) this.attempt = Math.max(this.attempt, 6);
       const delay = Math.min(30_000, 400 * 2 ** this.attempt) * (0.7 + Math.random() * 0.6);
+      // Compteur mis à jour AVANT l'annonce de l'état : l'interface affiche « serveur
+      // indisponible » dès le 3e échec consécutif.
       this.attempt++;
+      this.onState('offline');
       setTimeout(() => this.connect(), delay);
     };
   }

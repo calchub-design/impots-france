@@ -30,7 +30,26 @@ function pct(sorted: number[], p: number) {
   return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
 }
 
+/**
+ * Séparation stricte robots / joueurs réels : le test de charge ne vise qu'une machine
+ * locale, sauf option explicite. Contre un serveur de bêta en mode invitation, les robots
+ * (sans invitation) sont de toute façon refusés et ne créent aucun compte.
+ */
+function assertLocalTarget(target: string) {
+  if (!target) return;
+  let host = '';
+  try {
+    host = new URL(target).hostname;
+  } catch {
+    throw new Error(`URL invalide : ${target}`);
+  }
+  if (!['127.0.0.1', 'localhost', '[::1]', '::1'].includes(host) && !process.argv.includes('--autoriser-distant')) {
+    throw new Error(`Cible distante refusée (${host}) : le test de charge ne doit pas viser le serveur de la bêta. Ajoutez --autoriser-distant pour un serveur de test dédié.`);
+  }
+}
+
 async function main() {
+  assertLocalTarget(url);
   let server: GameServer | null = null;
   let dir: string | null = null;
   if (!url) {

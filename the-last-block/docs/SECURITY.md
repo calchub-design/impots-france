@@ -28,6 +28,18 @@ Aucun audit de sécurité externe n'a été réalisé. Un audit ciblé interne (
 - Page : CSP stricte (`script-src 'self'`, aucun script ou style inline, `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`. Le test à deux navigateurs n'a relevé aucune violation CSP.
 - Chemins statiques : traversée impossible, encodage invalide → 400.
 
+## Bêta privée (mode invitation)
+
+Vérifié par `tests/beta.test.ts` et `scripts/e2e-beta.mjs` :
+
+- `ACCESS_MODE=invite` : aucun compte n'est créé sans code d'invitation valide (vérifié côté serveur, consommé atomiquement dans la même transaction que la création du compte). Codes de 40 bits (`TLB-XXXX-XXXX`, alphabet de 30 caractères sans ambiguïté) stockés uniquement sous forme d'empreinte ; 10 échecs maximum par 10 min et par IP, puis refus même avec un bon code ; fermeture 4004 sans reconnexion automatique. Usage unique ou multiple, expiration, révocation.
+- Les comptes existants reprennent par leur jeton, sans invitation.
+- Lectures `/api/seasons`, `/api/hall`, `/api/discoveries`, `/api/season/projection` : jeton de joueur exigé (`x-tlb-token`) ; `/api/stats` réservé à l'administration.
+- `BETA_MODE=true` refuse de démarrer avec : accès ouvert, `ADMIN_TOKEN` ou `STATS_PSEUDONYM_SECRET` de moins de 32 caractères ou identiques, base par défaut, origines non `https://`, limites de jeu modifiées.
+- Aucun secret d'administration dans le code client compilé, la page, le stockage local ni les messages WebSocket.
+- Export statistique pseudonymisé (HMAC-SHA256 avec un secret dédié) ; aucun pseudo, nom de brigade, jeton ou code ; cellules neutralisées contre l'injection de formules.
+- Recommandé pour la bêta (exemple fourni, non déployé) : serveur sur `127.0.0.1`, Caddy en HTTPS/WSS, `/api/admin/*` fermé depuis Internet et utilisé par tunnel SSH.
+
 ## Mesures en place, non testées en conditions hostiles réelles
 
 - Anti-flood : 40 messages/s par connexion, avertissement explicite, expulsion après abus répété (le compteur décroît après 10 s de calme).
@@ -42,4 +54,4 @@ La présence révèle aux autres joueurs le **dernier bloc frappé** pendant 20 
 
 ## Limites connues
 
-Voir [AUDIT.md § 3](AUDIT.md#3-problèmes-restant-ouverts) : multi-comptes via plusieurs IP, robots respectant les limites, IP partagées (NAT), homoglyphes entre alphabets, jeton en `localStorage` (vol possible en cas de XSS), `/api/stats` public, perte des dernières transactions en cas de coupure électrique avec `SQLITE_SYNCHRONOUS=NORMAL`, déni de service non testé. Le HTTPS doit être assuré par un reverse proxy.
+Voir [AUDIT.md § 3](AUDIT.md#3-problèmes-restant-ouverts) : multi-comptes via plusieurs IP, robots respectant les limites, IP partagées (NAT), homoglyphes entre alphabets, jeton en `localStorage` (vol possible en cas de XSS), `/api/stats` public hors mode invitation, perte des dernières transactions en cas de coupure électrique avec `SQLITE_SYNCHRONOUS=NORMAL`, déni de service non testé. Le HTTPS doit être assuré par un reverse proxy.

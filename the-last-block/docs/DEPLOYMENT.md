@@ -2,6 +2,8 @@
 
 Rien n'a été déployé publiquement. Ce document décrit une mise en production possible sur un serveur que vous contrôlez, sans service payant imposé.
 
+**Bêta privée de 48 h** : suivre [BETA-48H.md](BETA-48H.md) (configuration `.env.beta.example`, exemples Caddy et systemd dans [deploy/](deploy/), invitations, sauvegardes, incidents, GO/NO-GO).
+
 ## Processus unique
 
 Le serveur garde l'état du cube en mémoire : lancez **une seule instance** par base de données. Ne mettez pas plusieurs réplicas derrière un répartiteur de charge.
@@ -70,11 +72,14 @@ Les paramètres dépendent entièrement de l'estimation de fréquentation : suiv
 
 ## Sauvegardes
 
-La base est un fichier SQLite en mode WAL. Sauvegarde à chaud :
+La base est un fichier SQLite en mode WAL. Sauvegarde à chaud, vérifiée (`VACUUM INTO` puis `integrity_check`), sans outil externe :
 
 ```bash
-sqlite3 data/lastblock.sqlite ".backup 'backup-$(date +%F).sqlite'"
+npm run backup -- --db data/lastblock.sqlite --out data/backups      # ou POST /api/admin/backup
+npm run restore -- --backup data/backups/lastblock-….sqlite --db data/lastblock.sqlite   # serveur ARRÊTÉ
 ```
+
+La restauration refuse de tourner si le serveur répond, vérifie la sauvegarde et conserve l'ancienne base (renommée `….avant-restauration-<date>`). Alternative : `sqlite3 data/lastblock.sqlite ".backup 'backup-$(date +%F).sqlite'"`.
 
 ## Administration
 
@@ -90,6 +95,8 @@ curl -X POST https://votre-domaine/api/admin/season/start -H "Authorization: Bea
 npm run loadtest -- --bots 100 --seconds 15              # serveur démarré dans le même processus
 npm run loadtest -- --url ws://localhost:8080/ws --bots 200   # serveur déjà lancé
 ```
+
+Par sécurité, `--url` n'accepte qu'une cible locale (`127.0.0.1`, `localhost`) ; `--autoriser-distant` est requis pour un serveur de test dédié. Ne jamais viser le serveur d'une bêta ou de production : en mode invitation, les robots sont de toute façon refusés.
 
 Chaque robot est un compte distinct qui mine un bloc aléatoire toutes les 220 ms (≈ 4,5 coups/s, sous la limite de 5/s).
 

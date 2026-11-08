@@ -1,0 +1,12 @@
+# /etc/systemd/system/the-last-block-backup.timer — EXEMPLE NON DÉPLOYÉ
+# Toutes les heures pendant la bêta (48 sauvegardes de quelques Mo).
+[Unit]
+Description=Sauvegarde horaire de The Last Block (bêta)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

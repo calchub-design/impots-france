@@ -1,0 +1,34 @@
+# /etc/systemd/system/the-last-block-beta.service — EXEMPLE NON DÉPLOYÉ
+# Une seule instance par base (l'état du cube est en mémoire).
+[Unit]
+Description=The Last Block (bêta privée 48 h)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lastblock
+Group=lastblock
+WorkingDirectory=/opt/the-last-block
+EnvironmentFile=/etc/the-last-block/beta.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning dist/server/server/index.js
+# Redémarrage automatique après un incident (aucun coup validé n'est perdu : SQLite WAL).
+Restart=on-failure
+RestartSec=3
+# Arrêt propre : SIGTERM, le serveur ferme les connexions et vide ses compteurs.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# Durcissement
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/the-last-block
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

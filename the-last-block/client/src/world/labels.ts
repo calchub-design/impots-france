@@ -65,3 +65,44 @@ export function placeLabels(reqs: LabelRequest[], viewW: number, viewH: number, 
   }
   return placed;
 }
+
+/**
+ * Découpe un message en lignes tenant dans `maxWidth` (mesure du contexte courant),
+ * au plus `maxLines` lignes ; la dernière est terminée par « … » si le texte déborde.
+ */
+export function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines = 4): string[] {
+  const lines: string[] = [];
+  let line = '';
+  const words = text.split(/\s+/).filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    const next = line ? `${line} ${words[i]}` : words[i];
+    if (ctx.measureText(next).width <= maxWidth || !line) {
+      line = next;
+      continue;
+    }
+    lines.push(line);
+    line = words[i];
+    if (lines.length === maxLines) {
+      line = '';
+      const last = lines.length - 1;
+      let cut = lines[last];
+      while (cut && ctx.measureText(`${cut}…`).width > maxWidth) cut = cut.slice(0, -1);
+      lines[last] = `${cut.trimEnd()}…`;
+      return lines;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/** Message centré sur plusieurs lignes (indisponibilité, maintenance, intersaison). */
+export function drawCenteredMessage(ctx: CanvasRenderingContext2D, text: string, w: number, h: number) {
+  const size = Math.max(14, Math.min(20, w / 26));
+  ctx.font = `600 ${size}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const lines = wrapLines(ctx, text, Math.max(120, w - 48));
+  const lh = size * 1.35;
+  const y0 = h / 2 - ((lines.length - 1) * lh) / 2;
+  lines.forEach((l, i) => ctx.fillText(l, w / 2, y0 + i * lh));
+}

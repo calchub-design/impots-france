@@ -44,7 +44,7 @@ npm start         # sert le client et le WebSocket sur PORT (8080)
 ## Tests
 
 ```bash
-npm test             # 210 tests Vitest (17 fichiers), ~20 s
+npm test             # 229 tests Vitest (18 fichiers), ~20 s
 npm run typecheck    # TypeScript (serveur, client, tests, scripts)
 npm run build && npm run e2e -- --rendu monolithe   # test réel : deux Chromium (mobile tactile + bureau), 31 vérifications
 npm run e2e -- --rendu classique                     # mêmes scénarios avec le rendu classique
@@ -52,6 +52,9 @@ npm run e2e:decouvertes -- --rendu monolithe         # découvertes « Le Signal
 npm run e2e:missions -- --rendu monolithe            # missions du jour : deux navigateurs, coups par l'interface (aussi --rendu classique)
 npm run e2e:brigades -- --rendu monolithe            # objectifs de brigade : deux navigateurs + robots membres (aussi --rendu classique)
 npm run e2e:ceremonie -- --rendu monolithe           # cérémonie de fin de saison et Hall des champions (aussi --rendu classique, --cpu 4)
+npm run e2e:beta -- --rendu monolithe                # bêta privée : invitation, pause, coupure serveur, Android + iPhone émulés (aussi --rendu classique)
+npm run calibrate -- --beta                          # saison de 48 h : préréglages et matrice de risques (15/20 invités)
+npm run backup / npm run restore                     # sauvegarde à chaud vérifiée / restauration serveur arrêté
 npm run loadtest -- --bots 100 --seconds 15
 npm run calibrate -- --days 30 --players 200 --minutes 30
 ```
@@ -76,9 +79,14 @@ npm run calibrate -- --days 30 --players 200 --minutes 30
 | `tests/ceremony.test.ts` | cérémonie et Hall : clôture unique (dernier bloc simultané), échéance, clôture administrative, sans contribution, brigade non qualifiée, archive figée, redémarrage, WebSocket et HTTP |
 | `tests/brigades.test.ts` | objectifs de brigade : brigades de 2, 5 et 10, arrivées et départs, dissolution, doublons, aucun effet sur le jeu, redémarrage, WebSocket |
 | `tests/missions.test.ts` | missions quotidiennes : seuils, doublons, deux joueurs, jour UTC, historique, cosmétique, aucun effet sur le jeu, redémarrage, WebSocket |
+| `tests/beta.test.ts` | bêta privée : configuration refusée, invitations (usage, révocation, expiration, empreinte), comptes de test, pause d'urgence, statistiques et rétention, export pseudonymisé, sauvegarde et restauration, WebSocket et HTTP en mode invitation |
 | `tests/discoveries.test.ts` | découvertes « Le Signal » : couches déclencheuses, révélation exacte et unique, indices, fin de saison, nouvelle saison, redémarrage, réconciliation, WebSocket |
 
 Le script `npm run e2e` utilise deux navigateurs distincts : un iPhone 13 émulé, avec gestes tactiles réels via CDP, et un ordinateur. Il vérifie le glisser, le pincer, la sélection et le minage après déplacement, la synchronisation des destructions, la présence, le panneau, l'absence de chevauchement à 5 tailles d'écran, un SIGKILL du serveur, `prefers-reduced-motion`, la fin de saison, l'absence d'erreur JavaScript, et mesure les performances. Détails et résultats : [docs/REFONTE.md](docs/REFONTE.md).
+
+## Bêta privée de 48 h
+
+Accès sur invitation vérifié par le serveur, mode bêta qui refuse les configurations dangereuses, pause d'urgence, statistiques sans service tiers avec export pseudonymisé, sauvegarde et restauration outillées, calibrage de la saison courte. **Préparée, non déployée.** Guide complet (commandes, indicateurs, incidents, retour arrière, données collectées, GO/NO-GO) : [docs/BETA-48H.md](docs/BETA-48H.md) ; questionnaires : [docs/BETA-QUESTIONNAIRE.md](docs/BETA-QUESTIONNAIRE.md) ; modèle de configuration : [.env.beta.example](.env.beta.example).
 
 ## Comment jouer
 
@@ -174,7 +182,7 @@ the-last-block/
 |---|---|---|
 | GET | `/api/health` | État du serveur |
 | GET | `/api/config` | Règles publiques, skins, paramètres d'association, fournisseurs de connexion |
-| GET | `/api/stats` | Compteurs (connexions, refus, coups, mémoire) — à protéger en production |
+| GET | `/api/stats` | Compteurs (connexions, refus, coups, mémoire) — réservé à l'administration en mode invitation |
 | GET | `/api/seasons` | Saisons (en cours et archivées) avec champion, brigade, Pierre finale, avance éventuelle |
 | GET | `/api/seasons/:id` | Classement final archivé |
 | GET | `/api/hall`, `/api/hall/:id` | Hall des champions : archives stables des saisons terminées |
@@ -183,6 +191,15 @@ the-last-block/
 | GET | `/api/season/projection` | Avancement et date de fin estimée de la saison en cours |
 | POST | `/api/admin/season/start` | `{name?, cubeSize?, durationHours?, baseHp?, hpPerLayer?, discoveryProfile?}` — `Authorization: Bearer $ADMIN_TOKEN` |
 | POST | `/api/admin/season/end` | Clôture la saison en cours |
+| GET | `/api/admin/status` | État d'exploitation : base, saison, projection, pause, dernière sauvegarde, compteurs |
+| GET/POST | `/api/admin/invites` | Liste (sans codes) / création `{count, label, maxUses?, kind?: player\|test, expiresInHours?}` (codes affichés une seule fois) |
+| POST | `/api/admin/invites/:id/revoke` | Révoque une invitation |
+| POST | `/api/admin/pause` | `{message}` : pause d'urgence (coups refusés, message affiché) ; `{message: null}` la lève |
+| POST | `/api/admin/backup` | Sauvegarde à chaud vérifiée dans `BACKUP_DIR` |
+| GET | `/api/admin/beta/summary` | Statistiques de bêta (participants, actifs par jour, sessions, retour à 24 h, refus, cube, missions, brigades, présence à la clôture) |
+| GET | `/api/admin/beta/export?table=players\|sessions\|daily\|cube\|brigades` | Export CSV pseudonymisé |
+
+En mode invitation (`ACCESS_MODE=invite`), `/api/seasons`, `/api/hall`, `/api/discoveries` et `/api/season/projection` exigent l'en-tête `x-tlb-token` d'un joueur (le client l'envoie).
 
 ## Fonctionnalités
 
@@ -226,5 +243,6 @@ the-last-block/
 - [ ] Modération des pseudos et détection des homoglyphes entre alphabets.
 - [x] Surface navigable (caméra, zoom, mini-carte, vue d'ensemble), panneau monumental dans le décor, présence réelle des mineurs.
 - [ ] Une seule face jouable (dessus de la couche courante) ; navigation clavier bloc par bloc ; surface étroite sur téléphone en paysage.
-- [ ] Tests sur téléphones physiques, Safari et Firefox.
+- [ ] Tests sur téléphones physiques, Safari et Firefox (liste précise des vérifications à faire avant la bêta : [docs/BETA-48H.md § 16](docs/BETA-48H.md#16-vérifications-sur-téléphone)).
+- [ ] Transfert d'un compte invité vers un autre appareil.
 - [ ] Magasin cosmétique, notifications, sons, PWA hors ligne.

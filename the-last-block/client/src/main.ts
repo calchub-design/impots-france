@@ -579,7 +579,8 @@ $('#brigade-go').addEventListener('click', () => joinBrigade());
 /** Message affiché sur la scène : indisponibilité, maintenance ou intersaison. */
 function worldMessage(): string | null {
   const conn = $('#conn-status').dataset.state;
-  if (conn === 'offline' && socket.failures >= 3) return 'Serveur momentanément indisponible — nouvelle tentative automatique…';
+  // Pendant les nouvelles tentatives (« connecting »), le message reste affiché sans clignoter.
+  if ((conn === 'offline' || conn === 'connecting') && socket.failures >= 3) return 'Serveur momentanément indisponible — nouvelle tentative automatique…';
   if (state.pause) return `Maintenance : ${state.pause}`;
   if (!state.season) return 'Intersaison — le prochain cube arrive bientôt';
   return null;
@@ -807,22 +808,22 @@ function onConnState(s: ConnState) {
   node.querySelector('.label')!.textContent =
     s === 'online'
       ? 'Connecté'
-      : s === 'connecting'
+      : socket.failures >= 3 && (s === 'connecting' || s === 'offline')
+        ? 'Serveur indisponible'
+        : s === 'connecting'
         ? 'Connexion…'
         : s === 'replaced'
           ? 'Ouvert ailleurs — toucher pour reprendre'
           : s === 'invite'
             ? 'Invitation requise'
-            : socket.failures >= 3
-              ? 'Serveur indisponible'
-              : 'Reconnexion…';
+            : 'Reconnexion…';
   if (s === 'invite') {
     $('#invite-gate').hidden = false;
     $<HTMLInputElement>('#invite-input').focus();
   }
   node.title = node.querySelector('.label')!.textContent ?? '';
   if (s !== 'online') stopHold?.();
-  syncWorld();
+  renderHud();
 }
 $('#conn-status').addEventListener('click', () => {
   if ($('#conn-status').dataset.state === 'replaced') socket.restart();
@@ -1268,8 +1269,12 @@ function renderHud() {
     $('#playtime-fill').classList.toggle('full', used >= pt.limitMs);
   }
   const limited = !!pt && pt.usedMs >= pt.limitMs;
-  mineBtn.disabled = !cube || !state.season || limited || state.pause !== null;
-  $('#mine-hint').textContent = state.pause !== null
+  // Serveur injoignable (3 échecs consécutifs) : rien ne sert d'accumuler des coups.
+  const unavailable = $('#conn-status').dataset.state !== 'online' && socket.failures >= 3;
+  mineBtn.disabled = !cube || !state.season || limited || state.pause !== null || unavailable;
+  $('#mine-hint').textContent = unavailable
+    ? 'Serveur indisponible — reconnexion automatique'
+    : state.pause !== null
     ? 'Minage suspendu (maintenance)'
     : limited
     ? 'Limite quotidienne atteinte'

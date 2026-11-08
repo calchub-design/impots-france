@@ -90,3 +90,101 @@ export function calibrate(input: CalibrationInput): CalibrationResult {
     warnings,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Bêta courte (48 h) : matrice de scénarios d'activité et risque de fin.
+// ---------------------------------------------------------------------------
+
+/** Hypothèse d'activité, exprimée par joueur INVITÉ (et non par joueur actif). */
+export interface ActivityScenario {
+  id: string;
+  label: string;
+  /** Part des invités qui jouent un jour donné (0-1). */
+  activeShare: number;
+  /** Minutes de minage actif par joueur présent et par jour (≤ 240). */
+  minutesPerDay: number;
+  /** Coups par seconde pendant le minage actif (≤ 5). */
+  hitsPerSecond: number;
+}
+
+/** Hypothèses retenues pour 15 à 20 joueurs (voir docs/BETA-48H.md). */
+export const BETA_SCENARIOS: readonly ActivityScenario[] = [
+  { id: 'faible', label: 'Faible : la moitié joue 20 min/jour', activeShare: 0.5, minutesPerDay: 20, hitsPerSecond: 2 },
+  { id: 'moyenne', label: 'Moyenne : 70 % jouent 45 min/jour', activeShare: 0.7, minutesPerDay: 45, hitsPerSecond: 3 },
+  { id: 'forte', label: 'Forte : 90 % jouent 1 h 30/jour', activeShare: 0.9, minutesPerDay: 90, hitsPerSecond: 3.5 },
+];
+
+export interface SeasonParams {
+  cubeSize: number;
+  baseHp: number;
+  hpPerLayer: number;
+  durationHours: number;
+}
+
+export type CompletionRisk = 'trop_tot' | 'dans_la_fenetre' | 'juste' | 'non_termine';
+
+export interface ScenarioOutcome {
+  scenario: string;
+  invitedPlayers: number;
+  hitsPerHour: number;
+  /** Heure (depuis le début) à laquelle le cube serait terminé ; null s'il ne l'est pas. */
+  finishHour: number | null;
+  /** Avancement du cube à l'échéance (plafonné à 100). */
+  progressAtEndPct: number;
+  risk: CompletionRisk;
+}
+
+/** Coups par heure, moyennés sur la journée, pour un nombre d'invités et une hypothèse. */
+export function hitsPerHour(invited: number, s: ActivityScenario): number {
+  return (invited * s.activeShare * Math.min(s.minutesPerDay, 240) * 60 * Math.min(s.hitsPerSecond, 5)) / 24;
+}
+
+/**
+ * Seuils : fin avant la moitié de la saison = « trop tôt » (le second jour serait
+ * sans cube) ; fin entre 50 et 90 % = dans la fenêtre ; 90-100 % = juste (un
+ * léger ralentissement suffit à ne pas finir) ; au-delà = non terminé.
+ */
+export function evaluateSeason(p: SeasonParams, invited: number, s: ActivityScenario): ScenarioOutcome {
+  const total = totalHits(p.cubeSize, p.baseHp, p.hpPerLayer);
+  const hph = hitsPerHour(invited, s);
+  const finish = hph > 0 ? total / hph : Infinity;
+  const ratio = finish / p.durationHours;
+  const risk: CompletionRisk = ratio < 0.5 ? 'trop_tot' : ratio <= 0.9 ? 'dans_la_fenetre' : ratio <= 1 ? 'juste' : 'non_termine';
+  return {
+    scenario: s.id,
+    invitedPlayers: invited,
+    hitsPerHour: Math.round(hph),
+    finishHour: ratio <= 1 ? Math.round(finish * 10) / 10 : null,
+    progressAtEndPct: Math.min(100, Math.round((hph * p.durationHours * 1000) / total) / 10),
+    risk,
+  };
+}
+
+/**
+ * Paramètres de cube pour qu'un scénario donné termine vers `targetFraction` de la
+ * durée (par défaut 75 % : fin vers la 36e heure sur 48, marge des deux côtés).
+ * La dureté croît avec la profondeur (rapport 3 entre fond et surface).
+ */
+export function calibrateShortSeason(opts: { invited: number; scenario: ActivityScenario; cubeSize: number; durationHours?: number; targetFraction?: number }): SeasonParams {
+  const durationHours = opts.durationHours ?? 48;
+  const r = calibrate({
+    days: durationHours / 24,
+    dailyActivePlayers: opts.invited * opts.scenario.activeShare,
+    activeMinutesPerPlayer: opts.scenario.minutesPerDay,
+    hitsPerSecond: opts.scenario.hitsPerSecond,
+    cubeSize: opts.cubeSize,
+    targetFraction: opts.targetFraction ?? 0.75,
+  });
+  return { cubeSize: r.cubeSize, baseHp: r.baseHp, hpPerLayer: r.hpPerLayer, durationHours };
+}
+
+/**
+ * Borne haute théorique : tous les invités minent 4 h par jour UTC à 5 coups/s.
+ * Une saison de 48 h qui ne commence pas à minuit UTC chevauche 3 jours UTC,
+ * soit jusqu'à 12 h de jeu par joueur.
+ */
+export function theoreticalMaxHits(invited: number, durationHours = 48, startsAtMidnightUtc = false): number {
+  const utcDays = Math.ceil(durationHours / 24) + (startsAtMidnightUtc || durationHours % 24 !== 0 ? 0 : 1);
+  const maxPlayHours = Math.min(durationHours, utcDays * 4);
+  return invited * maxPlayHours * 3600 * 5;
+}

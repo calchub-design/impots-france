@@ -1,0 +1,28 @@
+# Caddy (gratuit, certificats Let's Encrypt automatiques) devant The Last Block.
+# HTTPS et WSS sont fournis par Caddy ; le jeu écoute sur 127.0.0.1:8080 seulement.
+# Remplacer beta.exemple.fr par le (sous-)domaine réel, identique à ALLOWED_ORIGINS.
+# EXEMPLE NON DÉPLOYÉ — voir docs/BETA-48H.md.
+
+beta.exemple.fr {
+	encode zstd gzip
+
+	# Pas d'indexation par les moteurs de recherche.
+	header X-Robots-Tag "noindex, nofollow"
+	header Strict-Transport-Security "max-age=31536000"
+
+	# Administration jamais exposée sur Internet : utiliser un tunnel SSH
+	#   ssh -L 8080:127.0.0.1:8080 serveur   puis   curl http://127.0.0.1:8080/api/admin/...
+	@admin path /api/admin/*
+	respond @admin 404
+
+	# /api/stats est déjà réservé à l'administration en mode invitation ; on le ferme aussi ici.
+	@stats path /api/stats
+	respond @stats 404
+
+	# WebSocket (/ws) et pages : Caddy gère l'Upgrade et ajoute X-Forwarded-For
+	# (TRUST_PROXY=true côté jeu : la dernière valeur est l'IP réelle du client).
+	reverse_proxy 127.0.0.1:8080 {
+		# Coupure du serveur : les clients reçoivent une erreur et se reconnectent seuls.
+		lb_try_duration 2s
+	}
+}
