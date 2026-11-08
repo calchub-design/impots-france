@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { loadConfig } from './config.js';
+import { checkBetaConfig, loadConfig } from './config.js';
 import { startGameServer } from './net/gameServer.js';
 import { buildDiscoveryPlan } from './game/discoveries.js';
 
@@ -20,6 +20,10 @@ const config = loadConfig();
   // Profil de découvertes incompatible avec la taille du cube : signalé dès le démarrage.
   const plan = buildDiscoveryPlan(config.rules.discoveryProfile, config.rules.cubeSize);
   if (!plan.ok) console.warn(`[the-last-block] ATTENTION découvertes : ${plan.error}. Aucune saison ne pourra être créée avec ce réglage (choisir CUBE_SIZE ou DISCOVERY_PROFILE adapté, ou « none » pour une saison sans découverte).`);
+}
+if (config.beta.enabled || config.beta.accessMode === 'invite') {
+  console.log(`[the-last-block] ${config.beta.enabled ? 'MODE BÊTA PRIVÉE' : 'accès sur invitation'} : création de compte sur invitation uniquement.`);
+  for (const w of checkBetaConfig(config).warnings) console.warn(`[the-last-block] bêta : ${w}`);
 }
 const server = await startGameServer({ config });
 console.log(`[the-last-block] serveur prêt sur http://${config.host}:${server.port} (ws: /ws, db: ${config.dbPath})`);

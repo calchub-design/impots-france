@@ -256,6 +256,19 @@
         </div>
       </div>
       <div class="toasts" id="toasts" aria-live="polite"></div>
+      <div class="invite-gate" id="invite-gate" hidden>
+        <section class="invite-card" aria-labelledby="invite-title">
+          <span class="logo" aria-hidden="true"></span>
+          <h2 id="invite-title">The Last Block — bêta privée</h2>
+          <p>L'accès se fait sur invitation. Ouvrez votre lien d'invitation, ou saisissez le code reçu.</p>
+          <form id="invite-form" class="row">
+            <input name="code" id="invite-input" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="TLB-XXXX-XXXX" maxlength="20" required aria-label="Code d'invitation" />
+            <button type="submit">Entrer</button>
+          </form>
+          <p class="invite-error" id="invite-error" role="alert"></p>
+          <p class="muted small">Aucune donnée personnelle n'est demandée : un compte invité anonyme est créé sur cet appareil, et vos statistiques de jeu sont étudiées de façon pseudonymisée pendant la bêta.</p>
+        </section>
+      </div>
       <dialog id="season-dialog">
         <div id="season-dialog-body"></div>
         <form method="dialog"><button>Fermer</button></form>

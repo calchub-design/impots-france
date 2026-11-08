@@ -17,6 +17,14 @@ export class TestClient {
   closed!: Promise<{ code: number; reason: string }>;
 
   async connect(token?: string, name?: string): Promise<WelcomeMessage> {
+    return this.connectWith({ token: token ?? this.token, name });
+  }
+
+  /**
+   * Ouvre une connexion et envoie le hello donné (jeton, pseudo, code d'invitation).
+   * Rejette si le serveur ferme la connexion avant le welcome (invitation refusée, etc.).
+   */
+  async connectWith(hello: { token?: string; name?: string; invite?: string }): Promise<WelcomeMessage> {
     this.received = [];
     this.ws = new WebSocket(this.url);
     this.closed = new Promise((resolve) => this.ws.once('close', (code, reason) => resolve({ code, reason: reason.toString() })));
@@ -36,8 +44,13 @@ export class TestClient {
       this.ws.once('error', reject);
     });
     const welcome = this.waitFor((m) => m.t === 'welcome');
-    this.send({ t: 'hello', v: PROTOCOL_VERSION, token: token ?? this.token, name });
-    this.welcome = (await welcome) as WelcomeMessage;
+    welcome.catch(() => {});
+    this.send({ t: 'hello', v: PROTOCOL_VERSION, ...hello });
+    const closedEarly = this.closed.then(({ code }) => {
+      throw new Error(`connexion fermée avant le welcome (code ${code})`);
+    });
+    closedEarly.catch(() => {});
+    this.welcome = (await Promise.race([welcome, closedEarly])) as WelcomeMessage;
     if (this.welcome.token) this.token = this.welcome.token;
     return this.welcome;
   }

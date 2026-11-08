@@ -15,8 +15,11 @@ function storage(): Storage | null {
   }
 }
 
-/** `replaced` : session fermée car ouverte ailleurs (pas de reconnexion automatique). */
-export type ConnState = 'connecting' | 'online' | 'offline' | 'replaced';
+/**
+ * `replaced` : session fermée car ouverte ailleurs (pas de reconnexion automatique).
+ * `invite` : bêta privée, invitation requise pour créer un compte (pas de reconnexion automatique).
+ */
+export type ConnState = 'connecting' | 'online' | 'offline' | 'replaced' | 'invite';
 
 interface PendingAction {
   layer: number;
@@ -52,6 +55,20 @@ export class GameSocket {
     return storage()?.getItem(this.tokenKey) ?? undefined;
   }
 
+  /** Bêta privée : code d'invitation mémorisé (lien ou saisie) jusqu'à la création du compte. */
+  private get inviteKey() {
+    return `tlb.invite.${this.profile}`;
+  }
+
+  setInvite(code: string) {
+    storage()?.setItem(this.inviteKey, code.trim());
+  }
+
+  /** Échecs de connexion consécutifs (affichage « serveur indisponible »). */
+  get failures() {
+    return this.attempt;
+  }
+
   forgetToken() {
     storage()?.removeItem(this.tokenKey);
   }
@@ -64,7 +81,9 @@ export class GameSocket {
     this.ws = ws;
     ws.onopen = () => {
       this.attempt = 0;
-      this.send({ t: 'hello', v: PROTOCOL_VERSION, token: this.token });
+      const token = this.token;
+      const invite = token ? undefined : (storage()?.getItem(this.inviteKey) ?? undefined);
+      this.send({ t: 'hello', v: PROTOCOL_VERSION, token, ...(invite ? { invite } : {}) });
     };
     ws.onmessage = (ev) => {
       let msg: ServerMessage;
@@ -74,7 +93,10 @@ export class GameSocket {
         return;
       }
       if (msg.t === 'welcome') {
-        if (msg.token) storage()?.setItem(this.tokenKey, msg.token);
+        if (msg.token) {
+          storage()?.setItem(this.tokenKey, msg.token);
+          storage()?.removeItem(this.inviteKey); // compte créé : le code n'est plus utile
+        }
         this.onState('online');
         this.onMessage(msg);
         this.resendPending();
@@ -96,6 +118,12 @@ export class GameSocket {
     ws.onclose = (ev) => {
       if (this.ws !== ws) return;
       this.ws = null;
+      if (ev.code === CLOSE_CODES.inviteRequired) {
+        // Bêta privée : on attend que le joueur saisisse un code (pas de boucle de reconnexion).
+        this.closedByUser = true;
+        this.onState('invite');
+        return;
+      }
       if (ev.code === CLOSE_CODES.replaced) {
         // Trop de sessions : celle-ci a été remplacée. Ne pas se reconnecter
         // automatiquement (sinon les onglets se chasseraient en boucle).

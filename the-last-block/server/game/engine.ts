@@ -25,6 +25,7 @@ import type { SeasonArchive } from '../../shared/ceremony.js';
 import { brigadeEmblem } from '../../shared/brigades.js';
 import type { MissionsState } from '../../shared/missions.js';
 import { generateGuestToken, hashToken, isWellFormedToken } from '../auth/guest.js';
+import { generateBetaInviteCode, hashBetaInvite, newInviteId, normalizeBetaInvite } from '../auth/invites.js';
 import { activeCredit, dayKey, nextDayStart } from './playtime.js';
 import { SlidingWindowLimiter } from './rateLimiter.js';
 import {
@@ -65,7 +66,9 @@ export type EngineEvent =
   | { type: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null; archive: SeasonArchive }
   | { type: 'seasonStarted'; seasonId: number }
   | { type: 'brigadeChanged'; brigadeId: string; playerIds: string[] }
-  | { type: 'profileChanged'; playerId: string };
+  | { type: 'profileChanged'; playerId: string }
+  /** Pause d'urgence activée (message) ou levée (null). */
+  | { type: 'pause'; message: string | null };
 
 interface PlayerCache {
   id: string;
@@ -103,6 +106,8 @@ interface ActiveState {
 
 export interface EngineOptions {
   now?: () => number;
+  /** Bêta privée : la création d'un compte exige un code d'invitation valide. */
+  inviteOnly?: boolean;
   /** Cause de la saison (association partenaire), recopiée dans l'archive à la clôture. */
   donation?: { enabled: boolean; associationName: string; associationUrl: string; note: string };
 }
@@ -145,6 +150,9 @@ export class GameEngine {
   private lastHits = new Map<string, { block: number; layer: number; at: number }>();
 
   private readonly donation: EngineOptions['donation'];
+  readonly inviteOnly: boolean;
+  /** Pause d'urgence (message affiché aux joueurs), persistée : elle survit à un redémarrage. */
+  private pauseMessage: string | null = null;
 
   constructor(
     readonly store: GameStore,
@@ -153,6 +161,10 @@ export class GameEngine {
   ) {
     this.now = opts.now ?? Date.now;
     this.donation = opts.donation;
+    this.inviteOnly = !!opts.inviteOnly;
+    this.pauseMessage = store.getMeta('pause_message') ?? null;
+    // Sessions restées ouvertes par un arrêt brutal : closes au dernier coup connu.
+    store.closeDanglingSessions();
     this.limiter = new SlidingWindowLimiter(rules.maxActionsPerSecond, rules.rateWindowMs);
     this.missions = new MissionTracker(store);
     this.brigadeObjectives = new BrigadeObjectiveTracker(store);
@@ -206,7 +218,15 @@ export class GameEngine {
   }
 
   /** Crée un compte invité et renvoie son jeton (remis une seule fois). */
-  createGuest(requestedName?: unknown): { player: PublicPlayer; token: string } {
+  createGuest(requestedName?: unknown, rawInvite?: unknown): { player: PublicPlayer; token: string } {
+    // Bêta privée : invitation vérifiée AVANT toute écriture, et consommée dans la transaction de création.
+    let inviteHash: string | null = null;
+    if (this.inviteOnly) {
+      if (rawInvite === undefined || rawInvite === null || rawInvite === '') throw new GameError('invite_required', 'Accès sur invitation : saisissez votre code d\'invitation.');
+      const n = normalizeBetaInvite(rawInvite);
+      if (!n) throw new GameError('invalid_invite', 'Code d\'invitation invalide.');
+      inviteHash = hashBetaInvite(n);
+    }
     let name: string | null = null;
     if (requestedName !== undefined) {
       try {
@@ -223,7 +243,24 @@ export class GameEngine {
     }
     const token = generateGuestToken();
     const id = randomUUID();
-    this.store.createPlayer({ id, name, nameKey: nameKey(name), tokenHash: hashToken(token), skin: DEFAULT_SKIN, authProvider: 'guest', createdAt: this.now() });
+    this.store.transaction(() => {
+      let invite: { id: string; kind: 'player' | 'test' } | undefined;
+      if (inviteHash) {
+        invite = this.store.consumeInvite(inviteHash, this.now());
+        if (!invite) throw new GameError('invalid_invite', 'Code d\'invitation invalide, expiré, révoqué ou déjà utilisé.');
+      }
+      this.store.createPlayer({
+        id,
+        name: name!,
+        nameKey: nameKey(name!),
+        tokenHash: hashToken(token),
+        skin: DEFAULT_SKIN,
+        authProvider: 'guest',
+        createdAt: this.now(),
+        inviteId: invite?.id ?? null,
+        isTest: invite?.kind === 'test',
+      });
+    });
     return { player: this.publicPlayer(id), token };
   }
 
@@ -376,6 +413,7 @@ export class GameEngine {
 
     const st = this.state;
     if (!st) return { ok: false, reason: 'no_active_season' };
+    if (this.pauseMessage !== null) return { ok: false, reason: 'paused' };
 
     const now = this.now();
     if (now >= st.season.ends_at) {
@@ -653,6 +691,75 @@ export class GameEngine {
     if (!this.seasonArchive(seasonId)) throw new GameError('season_not_ended', 'Saison inconnue ou encore en cours.');
     this.store.setDonationAmount(seasonId, raw === null ? null : (raw as string).trim(), this.now());
     return this.seasonArchive(seasonId)!;
+  }
+
+  // =========================================================================
+  // Bêta privée : invitations et pause d'urgence
+  // =========================================================================
+
+  /** Crée des codes d'invitation ; les codes ne sont renvoyés qu'ici, une seule fois. */
+  createInvites(opts: { count?: unknown; label?: unknown; maxUses?: unknown; kind?: unknown; expiresInHours?: unknown }) {
+    const count = opts.count ?? 1;
+    const maxUses = opts.maxUses ?? 1;
+    const kind = opts.kind ?? 'player';
+    const label = typeof opts.label === 'string' ? opts.label.trim().replace(/[\u0000-\u001f<>]/g, '').slice(0, 40) : '';
+    if (!Number.isInteger(count) || (count as number) < 1 || (count as number) > 100) throw new GameError('invalid_count', 'Nombre de codes : entier de 1 à 100.');
+    if (!Number.isInteger(maxUses) || (maxUses as number) < 1 || (maxUses as number) > 50) throw new GameError('invalid_max_uses', 'Utilisations par code : entier de 1 à 50.');
+    if (kind !== 'player' && kind !== 'test') throw new GameError('invalid_kind', 'Type : « player » ou « test ».');
+    if (!label) throw new GameError('invalid_label', 'Libellé requis (ex. « Brigade A », « Smoke test »).');
+    let expiresAt: number | null = null;
+    if (opts.expiresInHours !== undefined) {
+      const h = opts.expiresInHours;
+      if (typeof h !== 'number' || !(h > 0) || h > 24 * 60) throw new GameError('invalid_expiry', 'Expiration : nombre d\'heures de 1 à 1440.');
+      expiresAt = this.now() + h * 3600_000;
+    }
+    const out: { id: string; code: string; label: string; kind: string; maxUses: number; expiresAt: number | null }[] = [];
+    this.store.transaction(() => {
+      for (let i = 0; i < (count as number); i++) {
+        const code = generateBetaInviteCode();
+        const id = newInviteId();
+        this.store.insertInvite({ id, codeHash: hashBetaInvite(normalizeBetaInvite(code)!), label, kind: kind as 'player' | 'test', maxUses: maxUses as number, createdAt: this.now(), expiresAt });
+        out.push({ id, code, label, kind: kind as string, maxUses: maxUses as number, expiresAt });
+      }
+    });
+    return out;
+  }
+
+  /** Invitations sans les codes (seules leurs empreintes sont conservées). */
+  listInvites() {
+    return this.store.listInvites().map((i) => ({
+      id: i.id,
+      label: i.label,
+      kind: i.kind,
+      uses: i.uses,
+      maxUses: i.max_uses,
+      createdAt: i.created_at,
+      expiresAt: i.expires_at,
+      revoked: i.revoked_at !== null,
+    }));
+  }
+
+  revokeInvite(id: unknown): boolean {
+    if (typeof id !== 'string' || !/^inv_[0-9a-f]{12}$/.test(id)) throw new GameError('invalid_invite_id', 'Identifiant d\'invitation invalide.');
+    return this.store.revokeInvite(id, this.now());
+  }
+
+  get pause(): string | null {
+    return this.pauseMessage;
+  }
+
+  /**
+   * Pause d'urgence : les coups sont refusés (« paused ») avec le message, jusqu'à la levée.
+   * Elle n'arrête PAS l'horloge de la saison ; pour mettre fin à la saison : clôture administrative.
+   */
+  setPause(raw: unknown): string | null {
+    if (raw !== null && (typeof raw !== 'string' || !raw.trim() || raw.length > 160 || /[<>\u0000-\u001f]/.test(raw))) {
+      throw new GameError('invalid_message', 'Message de pause : texte de 1 à 160 caractères, ou null pour lever la pause.');
+    }
+    this.pauseMessage = raw === null ? null : (raw as string).trim();
+    this.store.setMeta('pause_message', this.pauseMessage);
+    this.emit({ type: 'pause', message: this.pauseMessage });
+    return this.pauseMessage;
   }
 
   /** Missions du jour du joueur (saison active), avec l'historique de la saison si demandé. */

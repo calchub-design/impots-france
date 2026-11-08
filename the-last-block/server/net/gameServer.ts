@@ -28,6 +28,8 @@ interface Conn {
   alive: boolean;
   id: number;
   ip: string;
+  /** Ligne de la table sessions (bêta : durée des sessions de jeu). */
+  sessionId?: number;
 }
 
 const DELTA_FLUSH_MS = 50;
@@ -51,6 +53,8 @@ export interface GameServer {
   stats(): Record<string, unknown>;
   /** Changement de jour UTC : renvoie les missions remises à zéro aux joueurs connectés (appelé chaque seconde). */
   checkDayRollover(): void;
+  /** Verse en base les compteurs journaliers (toutes les 30 s ; à l'arrêt ; appelable en test). */
+  flushCounters(): void;
 }
 
 export interface GameServerOptions {
@@ -64,7 +68,7 @@ export interface GameServerOptions {
 export async function startGameServer(opts: GameServerOptions): Promise<GameServer> {
   const { config } = opts;
   const store = opts.store ?? new SqliteStore(config.dbPath, { synchronous: config.security.sqliteSynchronous });
-  const engine = new GameEngine(store, config.rules, { now: opts.now, donation: config.donation });
+  const engine = new GameEngine(store, config.rules, { now: opts.now, donation: config.donation, inviteOnly: config.beta.accessMode === 'invite' });
   const providers = createIdentityProviders(config.auth);
   engine.tick();
 
@@ -73,6 +77,21 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   const connLimiter = new SlidingWindowLimiter(CONN_MSG_PER_SEC, 1000);
   const socialLimiter = new SlidingWindowLimiter(SOCIAL_ACTIONS, SOCIAL_WINDOW_MS);
   const accountLimiter = new SlidingWindowLimiter(config.security.newAccountsPerIpPerHour, 3600_000);
+  /** Bêta : codes d'invitation erronés, 10 par 10 min et par adresse IP (freine la recherche de codes). */
+  const inviteFailures = new SlidingWindowLimiter(10, 10 * 60_000);
+  /** Compteurs journaliers agrégés (sans identité), versés en base toutes les 30 s et à l'arrêt. */
+  let dayCounters: Record<string, number> = {};
+  let dayCountersDay = dayKey(engine.now());
+  function count(key: string) {
+    const day = dayKey(engine.now());
+    if (day !== dayCountersDay) flushCounters();
+    dayCountersDay = day;
+    dayCounters[key] = (dayCounters[key] ?? 0) + 1;
+  }
+  function flushCounters() {
+    if (Object.keys(dayCounters).length) store.addDailyCounters(dayCountersDay, dayCounters);
+    dayCounters = {};
+  }
   const ipConns = new Map<string, number>();
   let seq = 0;
   let pending: BlockDelta[] = [];
@@ -191,6 +210,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       discoveries: engine.discoveryLog(),
       missions: engine.missionsState(playerId, true),
       ceremony: engine.lastArchive(),
+      pause: engine.pause,
     };
   }
 
@@ -228,12 +248,28 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
         if (cube) broadcast({ t: 'layer', seq, seasonId: e.seasonId, cube });
         break;
       }
-      case 'seasonEnded':
+      case 'pause':
+        broadcast({ t: 'pause', message: e.message });
+        break;
+      case 'seasonEnded': {
         flushDeltas();
+        // Bêta : joueurs connectés (hors comptes de test) et actifs dans les 5 dernières minutes, à la clôture.
+        const ids = [...byPlayer.keys()];
+        const real = ids.length
+          ? store.query<{ n: number }>(`SELECT COUNT(*) AS n FROM players WHERE is_test = 0 AND id IN (${ids.map(() => '?').join(',')})`, ...ids)[0].n
+          : 0;
+        const at = engine.now();
+        const active5 = store.query<{ n: number }>(
+          'SELECT COUNT(DISTINCT h.player_id) AS n FROM hits h JOIN players p ON p.id = h.player_id WHERE h.season_id = ? AND h.at >= ? AND p.is_test = 0',
+          e.season.id,
+          at - 5 * 60_000,
+        )[0].n;
+        store.recordClosurePresence(e.season.id, real, active5, at);
         broadcast({ t: 'seasonEnded', season: e.season, nextSeasonAt: e.nextSeasonAt, archive: e.archive });
         // Renvoi d'un état complet (sans cube actif) à tout le monde.
         queueMicrotask(resyncAll);
         break;
+      }
       case 'seasonStarted':
         broadcast({ t: 'seasonStarted' });
         queueMicrotask(resyncAll);
@@ -260,6 +296,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
 
   function attach(c: Conn, playerId: string) {
     c.playerId = playerId;
+    c.sessionId = store.startSession(playerId, engine.now());
     let set = byPlayer.get(playerId);
     if (!set) {
       set = new Set();
@@ -274,6 +311,8 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
         counters.sessionsReplaced++;
         set.delete(o);
         o.playerId = null;
+        if (o.sessionId !== undefined) store.endSession(o.sessionId, engine.now());
+        o.sessionId = undefined;
         o.ws.close(CLOSE_CODES.replaced, 'session replaced');
       }
     }
@@ -294,6 +333,8 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
     const n = (ipConns.get(c.ip) ?? 1) - 1;
     if (n <= 0) ipConns.delete(c.ip);
     else ipConns.set(c.ip, n);
+    if (c.sessionId !== undefined) store.endSession(c.sessionId, engine.now());
+    c.sessionId = undefined;
     if (!c.playerId) return;
     const set = byPlayer.get(c.playerId);
     if (set) {
@@ -326,13 +367,30 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
         attach(c, player.id);
         return send(c, welcome(player.id));
       }
+      // Bêta privée : sans invitation valide, aucun compte n'est créé (les comptes existants reprennent normalement).
+      if (engine.inviteOnly && inviteFailures.isBlocked(c.ip, Date.now())) {
+        send(c, { t: 'error', code: 'too_many_attempts', message: 'Trop de codes d\'invitation erronés. Réessayez dans quelques minutes.' });
+        return c.ws.close(CLOSE_CODES.inviteRequired, 'too many invite attempts');
+      }
       // Création : limitée par adresse IP.
       if (accountLimiter.tryTake(c.ip, Date.now()) > 0) {
         counters.accountsRefused++;
         send(c, { t: 'error', code: 'too_many_accounts', message: 'Trop de comptes créés depuis cette adresse. Réessayez plus tard.' });
         return c.ws.close(1008, 'too many accounts');
       }
-      const { player, token } = engine.createGuest(msg.name);
+      let created: { player: { id: string }; token: string };
+      try {
+        created = engine.createGuest(msg.name, msg.invite);
+      } catch (err) {
+        if (err instanceof GameError && (err.code === 'invite_required' || err.code === 'invalid_invite')) {
+          if (err.code === 'invalid_invite') inviteFailures.tryTake(c.ip, Date.now());
+          count(`invite:${err.code}`);
+          send(c, { t: 'error', code: err.code, message: err.message });
+          return c.ws.close(CLOSE_CODES.inviteRequired, err.code);
+        }
+        throw err;
+      }
+      const { player, token } = created;
       attach(c, player.id);
       return send(c, welcome(player.id, token));
     }
@@ -351,6 +409,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
         if (r.ok) {
           if (r.duplicate) counters.mineDuplicate++;
           else counters.mineAccepted++;
+          count(r.duplicate ? 'duplicate' : 'accepted');
           return send(c, {
             t: 'mineResult',
             actionId,
@@ -365,6 +424,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
           });
         }
         counters.mineRejected++;
+        count(`refused:${r.reason}`);
         return send(c, {
           t: 'mineResult',
           actionId,
@@ -472,6 +532,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   if (!opts.manualTick) {
     timers.push(setInterval(flushDeltas, DELTA_FLUSH_MS));
     timers.push(setInterval(flushBoard, BOARD_INTERVAL_MS));
+    timers.push(setInterval(flushCounters, 30_000));
     timers.push(
       setInterval(() => {
         try {
@@ -514,9 +575,12 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
     port,
     stats,
     checkDayRollover,
+    flushCounters,
     async close() {
       for (const t of timers) clearInterval(t);
       flushDeltas();
+      flushCounters();
+      for (const c of conns) if (c.sessionId !== undefined) store.endSession(c.sessionId, engine.now());
       for (const c of conns) c.ws.terminate();
       await new Promise<void>((r) => wss.close(() => r()));
       await new Promise<void>((r) => httpServer.close(() => r()));

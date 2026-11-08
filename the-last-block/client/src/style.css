@@ -2049,3 +2049,51 @@ body[data-renderer='monolith'] .vignette {
   font-weight: 800;
   color: var(--gold-2);
 }
+
+/* --- Bêta privée : accès sur invitation ------------------------------------ */
+
+.invite-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: radial-gradient(ellipse at 50% 35%, rgba(60, 30, 120, 0.6), rgba(5, 6, 16, 0.96) 70%);
+}
+
+.invite-gate[hidden] {
+  display: none;
+}
+
+.invite-card {
+  width: min(420px, 100%);
+  padding: 1.2rem 1.1rem 1rem;
+  border-radius: 16px 4px 16px 4px;
+  border: 1px solid rgba(127, 233, 255, 0.55);
+  background: linear-gradient(160deg, rgba(12, 28, 58, 0.95), rgba(30, 14, 58, 0.95));
+  box-shadow: 0 0 30px rgba(65, 224, 255, 0.2);
+  text-align: center;
+}
+
+.invite-card .logo {
+  display: inline-block;
+  width: 36px;
+  height: 36px;
+}
+
+.invite-card h2 {
+  margin: 0.4rem 0;
+}
+
+.invite-card input {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
+.invite-error {
+  min-height: 1.2em;
+  color: var(--bad);
+  font-size: 0.85rem;
+}

@@ -214,6 +214,41 @@ CREATE TABLE IF NOT EXISTS season_archives (
   donation_set_at INTEGER
 );
 
+-- Bêta privée : codes d'invitation (seule l'empreinte SHA-256 du code est conservée).
+CREATE TABLE IF NOT EXISTS invites (
+  id TEXT PRIMARY KEY,
+  code_hash TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('player', 'test')),
+  max_uses INTEGER NOT NULL,
+  uses INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER,
+  revoked_at INTEGER
+);
+-- Sessions de jeu (connexions authentifiées) : début et fin, sans adresse IP.
+CREATE TABLE IF NOT EXISTS sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS sessions_player ON sessions(player_id, started_at);
+-- Compteurs journaliers agrégés (coups refusés par motif, doublons…), sans identité.
+CREATE TABLE IF NOT EXISTS daily_counters (
+  day TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value INTEGER NOT NULL,
+  PRIMARY KEY (day, key)
+) WITHOUT ROWID;
+-- Joueurs présents au moment de la clôture d'une saison.
+CREATE TABLE IF NOT EXISTS season_closure_presence (
+  season_id INTEGER PRIMARY KEY,
+  connected_players INTEGER NOT NULL,
+  active_last_5_min INTEGER NOT NULL,
+  at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS season_results (
   season_id INTEGER NOT NULL,
   kind TEXT NOT NULL,
@@ -253,6 +288,9 @@ export class SqliteStore implements GameStore {
     // Profil de découvertes de la saison (NULL : saison antérieure aux découvertes, plan à créer).
     if (!scols.some((c) => c.name === 'discovery_profile')) this.db.exec('ALTER TABLE seasons ADD COLUMN discovery_profile TEXT');
     if (!scols.some((c) => c.name === 'discovery_error')) this.db.exec('ALTER TABLE seasons ADD COLUMN discovery_error TEXT');
+    // Bêta : invitation utilisée à la création, et comptes de test (exclus des statistiques).
+    if (!cols.some((c) => c.name === 'invite_id')) this.db.exec('ALTER TABLE players ADD COLUMN invite_id TEXT');
+    if (!cols.some((c) => c.name === 'is_test')) this.db.exec('ALTER TABLE players ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0');
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS players_name_key ON players(name_key)');
     // Rattrapage : pseudos sans clé (v1). En cas de doublon historique, la clé
     // reste NULL : ce joueur devra changer de pseudo pour en réserver un.
@@ -316,10 +354,10 @@ export class SqliteStore implements GameStore {
 
   // --- Joueurs -------------------------------------------------------------
 
-  createPlayer(p: { id: string; name: string; nameKey: string; tokenHash: string | null; skin: string; authProvider: string; createdAt: number }): void {
+  createPlayer(p: { id: string; name: string; nameKey: string; tokenHash: string | null; skin: string; authProvider: string; createdAt: number; inviteId?: string | null; isTest?: boolean }): void {
     this.run(
-      'INSERT INTO players(id, name, name_key, token_hash, skin, auth_provider, created_at) VALUES (?,?,?,?,?,?,?)',
-      p.id, p.name, p.nameKey, p.tokenHash, p.skin, p.authProvider, p.createdAt,
+      'INSERT INTO players(id, name, name_key, token_hash, skin, auth_provider, created_at, invite_id, is_test) VALUES (?,?,?,?,?,?,?,?,?)',
+      p.id, p.name, p.nameKey, p.tokenHash, p.skin, p.authProvider, p.createdAt, p.inviteId ?? null, p.isTest ? 1 : 0,
     );
   }
   countPlayers(): number {
@@ -388,6 +426,73 @@ export class SqliteStore implements GameStore {
   }
 
   // --- Blocs ---------------------------------------------------------------
+
+  // --- Bêta : invitations, pause, sessions, compteurs ------------------------------
+  insertInvite(i: { id: string; codeHash: string; label: string; kind: 'player' | 'test'; maxUses: number; createdAt: number; expiresAt: number | null }) {
+    this.run(
+      'INSERT INTO invites(id, code_hash, label, kind, max_uses, created_at, expires_at) VALUES (?,?,?,?,?,?,?)',
+      i.id, i.codeHash, i.label, i.kind, i.maxUses, i.createdAt, i.expiresAt,
+    );
+  }
+  /** Utilise une invitation si elle est valide (atomique) ; undefined sinon. */
+  consumeInvite(codeHash: string, now: number) {
+    return this.get<{ id: string; kind: 'player' | 'test'; label: string }>(
+      `UPDATE invites SET uses = uses + 1
+       WHERE code_hash = ? AND revoked_at IS NULL AND uses < max_uses AND (expires_at IS NULL OR expires_at > ?)
+       RETURNING id, kind, label`,
+      codeHash, now,
+    );
+  }
+  listInvites() {
+    return this.all<{ id: string; label: string; kind: 'player' | 'test'; max_uses: number; uses: number; created_at: number; expires_at: number | null; revoked_at: number | null }>(
+      'SELECT id, label, kind, max_uses, uses, created_at, expires_at, revoked_at FROM invites ORDER BY created_at, id',
+    );
+  }
+  revokeInvite(id: string, at: number): boolean {
+    return Number(this.run('UPDATE invites SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL', at, id).changes) === 1;
+  }
+  getMeta(key: string): string | undefined {
+    return this.get<{ value: string }>('SELECT value FROM meta WHERE key = ?', key)?.value;
+  }
+  setMeta(key: string, value: string | null) {
+    if (value === null) this.run('DELETE FROM meta WHERE key = ?', key);
+    else this.run('INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, value);
+  }
+  startSession(playerId: string, at: number): number {
+    return Number(this.run('INSERT INTO sessions(player_id, started_at) VALUES (?, ?)', playerId, at).lastInsertRowid);
+  }
+  endSession(id: number, at: number) {
+    this.run('UPDATE sessions SET ended_at = ? WHERE id = ? AND ended_at IS NULL', at, id);
+  }
+  /** Après un arrêt brutal : sessions restées ouvertes, closes au dernier coup connu du joueur (ou à leur début). */
+  closeDanglingSessions(): number {
+    return Number(
+      this.run(
+        `UPDATE sessions SET ended_at = MAX(started_at, COALESCE((SELECT last_action_at FROM players p WHERE p.id = sessions.player_id), started_at))
+         WHERE ended_at IS NULL`,
+      ).changes,
+    );
+  }
+  addDailyCounters(day: string, values: Record<string, number>) {
+    const st = this.st('INSERT INTO daily_counters(day, key, value) VALUES (?,?,?) ON CONFLICT(day, key) DO UPDATE SET value = value + excluded.value');
+    this.transaction(() => {
+      for (const [k, v] of Object.entries(values)) if (v) st.run(day, k, v);
+    });
+  }
+  recordClosurePresence(seasonId: number, connected: number, active5: number, at: number) {
+    this.run('INSERT OR IGNORE INTO season_closure_presence(season_id, connected_players, active_last_5_min, at) VALUES (?,?,?,?)', seasonId, connected, active5, at);
+  }
+  /** Requête en lecture seule pour les statistiques de bêta (jamais exposée au client). */
+  query<T>(sql: string, ...p: (string | number | null)[]): T[] {
+    return this.all<T>(sql, ...p);
+  }
+  /** Copie cohérente de la base, à chaud (VACUUM INTO), puis contrôle d'intégrité de la copie. */
+  backupTo(path: string): void {
+    this.db.prepare('VACUUM INTO ?').run(path);
+  }
+  ping(): boolean {
+    return this.get<{ ok: number }>('SELECT 1 AS ok')?.ok === 1;
+  }
 
   // --- Archives de saison (cérémonie, Hall des champions) ----------------------
   insertSeasonArchive(seasonId: number, data: string, closedAt: number) {

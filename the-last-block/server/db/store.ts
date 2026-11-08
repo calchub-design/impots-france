@@ -102,7 +102,7 @@ export interface GameStore {
   close(): void;
 
   // Joueurs
-  createPlayer(p: { id: string; name: string; nameKey: string; tokenHash: string | null; skin: string; authProvider: string; createdAt: number }): void;
+  createPlayer(p: { id: string; name: string; nameKey: string; tokenHash: string | null; skin: string; authProvider: string; createdAt: number; inviteId?: string | null; isTest?: boolean }): void;
   getPlayer(id: string): PlayerRow | undefined;
   countPlayers(): number;
   getPlayerByTokenHash(hash: string): PlayerRow | undefined;
@@ -159,6 +159,22 @@ export interface GameStore {
   listBrigades(): (BrigadeRow & { members: number })[];
 
   // Archives
+  // Bêta privée
+  insertInvite(i: { id: string; codeHash: string; label: string; kind: 'player' | 'test'; maxUses: number; createdAt: number; expiresAt: number | null }): void;
+  consumeInvite(codeHash: string, now: number): { id: string; kind: 'player' | 'test'; label: string } | undefined;
+  listInvites(): { id: string; label: string; kind: 'player' | 'test'; max_uses: number; uses: number; created_at: number; expires_at: number | null; revoked_at: number | null }[];
+  revokeInvite(id: string, at: number): boolean;
+  getMeta(key: string): string | undefined;
+  setMeta(key: string, value: string | null): void;
+  startSession(playerId: string, at: number): number;
+  endSession(id: number, at: number): void;
+  closeDanglingSessions(): number;
+  addDailyCounters(day: string, values: Record<string, number>): void;
+  recordClosurePresence(seasonId: number, connected: number, active5: number, at: number): void;
+  query<T>(sql: string, ...p: (string | number | null)[]): T[];
+  backupTo(path: string): void;
+  ping(): boolean;
+
   // Archives de saison (cérémonie, Hall des champions)
   insertSeasonArchive(seasonId: number, data: string, closedAt: number): void;
   insertSeasonArchiveIfMissing(seasonId: number, data: string, closedAt: number): void;

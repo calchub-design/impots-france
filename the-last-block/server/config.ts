@@ -47,6 +47,21 @@ export interface SecuritySettings {
   sqliteSynchronous: 'NORMAL' | 'FULL';
 }
 
+/**
+ * Bêta privée : accès sur invitation et contrôles de configuration au démarrage.
+ * Voir docs/BETA-48H.md.
+ */
+export interface BetaSettings {
+  /** Mode bêta : la configuration est vérifiée au démarrage (refus de démarrer si dangereuse). */
+  enabled: boolean;
+  /** « open » : tout visiteur peut créer un compte invité ; « invite » : création sur code d'invitation. */
+  accessMode: 'open' | 'invite';
+  /** Secret de pseudonymisation des exports statistiques (HMAC), jamais envoyé au client. */
+  pseudonymSecret: string;
+  /** Dossier des sauvegardes à chaud (POST /api/admin/backup). */
+  backupDir: string;
+}
+
 export interface AppConfig {
   port: number;
   host: string;
@@ -58,6 +73,7 @@ export interface AppConfig {
   security: SecuritySettings;
   donation: DonationSettings;
   auth: { googleClientId: string; appleClientId: string };
+  beta: BetaSettings;
 }
 
 type Env = Record<string, string | undefined>;
@@ -108,10 +124,10 @@ export const DEFAULT_RULES: GameRules = {
 };
 
 export function loadConfig(env: Env = process.env): AppConfig {
-  return {
+  const config: AppConfig = {
     port: int(env, 'PORT', 8080, 0, 65535),
     host: str(env, 'HOST', '0.0.0.0'),
-    dbPath: str(env, 'DB_PATH', './data/lastblock.sqlite'),
+    dbPath: str(env, 'DB_PATH', DEFAULT_DB_PATH),
     adminToken: str(env, 'ADMIN_TOKEN', ''),
     allowedOrigins: str(env, 'ALLOWED_ORIGINS', '')
       .split(',')
@@ -156,5 +172,49 @@ export function loadConfig(env: Env = process.env): AppConfig {
       googleClientId: str(env, 'GOOGLE_CLIENT_ID', ''),
       appleClientId: str(env, 'APPLE_CLIENT_ID', ''),
     },
+    beta: {
+      enabled: bool(env, 'BETA_MODE', false),
+      accessMode: accessMode(env),
+      pseudonymSecret: str(env, 'STATS_PSEUDONYM_SECRET', ''),
+      backupDir: str(env, 'BACKUP_DIR', './data/backups'),
+    },
   };
+  const check = checkBetaConfig(config);
+  if (config.beta.enabled && check.errors.length) {
+    throw new Error(`Configuration de bêta refusée :\n - ${check.errors.join('\n - ')}`);
+  }
+  return config;
+}
+
+function accessMode(env: Env): 'open' | 'invite' {
+  const v = str(env, 'ACCESS_MODE', 'open').trim().toLowerCase() || 'open';
+  if (v !== 'open' && v !== 'invite') throw new Error(`Variable ACCESS_MODE invalide: "${v}" (open ou invite)`);
+  return v;
+}
+
+export const DEFAULT_DB_PATH = './data/lastblock.sqlite';
+
+/**
+ * Contrôles de la configuration d'une bêta privée. `errors` empêchent le démarrage
+ * (BETA_MODE=true) ; `warnings` sont affichés au démarrage.
+ */
+export function checkBetaConfig(c: AppConfig): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  if (c.beta.accessMode !== 'invite') errors.push('ACCESS_MODE doit valoir « invite » (accès privé sur invitation).');
+  if (c.adminToken.length < 32) errors.push('ADMIN_TOKEN doit contenir au moins 32 caractères aléatoires.');
+  if (c.beta.pseudonymSecret.length < 32) errors.push('STATS_PSEUDONYM_SECRET doit contenir au moins 32 caractères aléatoires.');
+  if (c.beta.pseudonymSecret && c.beta.pseudonymSecret === c.adminToken) errors.push('STATS_PSEUDONYM_SECRET doit être différent de ADMIN_TOKEN.');
+  if (c.dbPath === DEFAULT_DB_PATH || c.dbPath === ':memory:') errors.push(`DB_PATH doit désigner une base dédiée à la bêta (pas ${c.dbPath}).`);
+  if (c.allowedOrigins.length === 0) errors.push('ALLOWED_ORIGINS doit lister l\'origine HTTPS de la bêta.');
+  else if (c.allowedOrigins.some((o) => !o.startsWith('https://'))) errors.push('ALLOWED_ORIGINS : seules des origines https:// sont acceptées en bêta.');
+  if (c.rules.maxActionsPerSecond !== 5) errors.push('MAX_ACTIONS_PER_SECOND doit rester à 5 (règle de production).');
+  if (c.rules.dailyActiveLimitMs !== 4 * 3600_000) errors.push('DAILY_ACTIVE_LIMIT_MINUTES doit rester à 240 (4 h, règle de production).');
+  if (c.rules.brigadeMinSize < 5) errors.push('BRIGADE_MIN_SIZE doit être d\'au moins 5 (règle de production).');
+  if (c.rules.discoveryProfile !== 'mini-48h') errors.push('DISCOVERY_PROFILE doit valoir « mini-48h » pour la bêta de 48 h.');
+  if (c.rules.seasonDurationMs !== 48 * 3600_000) warnings.push('SEASON_DURATION_HOURS ne vaut pas 48 : la saison automatique ne durera pas 48 h.');
+  if (c.rules.autoStartSeason) warnings.push('AUTO_START_SEASON=true : une saison démarrera seule. Recommandé : false, puis démarrage par l\'administration après le test de fumée.');
+  if (c.host !== '127.0.0.1' && c.host !== 'localhost') warnings.push(`HOST=${c.host} : le serveur écoute sur toutes les interfaces. Recommandé : 127.0.0.1 derrière le reverse proxy HTTPS.`);
+  if (!c.security.trustProxy) warnings.push('TRUST_PROXY=false : derrière un reverse proxy, les limites par IP verraient toutes les connexions venir du proxy.');
+  return { errors, warnings };
 }

@@ -61,6 +61,8 @@ interface State {
   /** Missions du jour, telles qu'envoyées par le serveur. */
   missions: MissionsState | null;
   missionHistory: MissionHistoryDay[];
+  /** Pause d'urgence annoncée par le serveur (message), sinon null. */
+  pause: string | null;
 }
 
 const state: State = {
@@ -82,6 +84,7 @@ const state: State = {
   discoveries: null,
   missions: null,
   missionHistory: [],
+  pause: null,
 };
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -329,7 +332,7 @@ function renderArchivesView(log: DiscoveryLog | null) {
 async function openArchives() {
   const sel = $<HTMLSelectElement>('#archives-season');
   try {
-    const r = await fetch('/api/seasons');
+    const r = await apiFetch('/api/seasons');
     const data = (await r.json()) as { seasons: SeasonInfo[] };
     const current = state.discoveries?.seasonId ?? null;
     sel.replaceChildren(
@@ -350,7 +353,7 @@ $<HTMLSelectElement>('#archives-season').addEventListener('change', async (e) =>
   archivesSeason = id === state.discoveries?.seasonId ? null : id;
   if (archivesSeason === null) return renderArchivesView(state.discoveries);
   try {
-    const r = await fetch(`/api/discoveries?season=${id}`);
+    const r = await apiFetch(`/api/discoveries?season=${id}`);
     if (r.ok) renderArchivesView(((await r.json()) as { discoveries: DiscoveryLog }).discoveries);
   } catch {
     toast('Archives indisponibles hors connexion.', 'bad');
@@ -431,7 +434,7 @@ function receiveCeremony(a: SeasonArchive | null) {
 
 async function loadHall() {
   try {
-    const r = await fetch('/api/hall');
+    const r = await apiFetch('/api/hall');
     const { seasons } = (await r.json()) as { seasons: SeasonArchive[] };
     $('#hall-list').replaceChildren(
       ...(seasons.length
@@ -573,6 +576,15 @@ function joinBrigade(targetId?: string) {
 }
 $('#brigade-go').addEventListener('click', () => joinBrigade());
 
+/** Message affiché sur la scène : indisponibilité, maintenance ou intersaison. */
+function worldMessage(): string | null {
+  const conn = $('#conn-status').dataset.state;
+  if (conn === 'offline' && socket.failures >= 3) return 'Serveur momentanément indisponible — nouvelle tentative automatique…';
+  if (state.pause) return `Maintenance : ${state.pause}`;
+  if (!state.season) return 'Intersaison — le prochain cube arrive bientôt';
+  return null;
+}
+
 function syncWorld() {
   updateBillboard();
   world.setState({
@@ -581,7 +593,7 @@ function syncWorld() {
     selected: state.selected,
     pending: new Set([...pendingHits.values()].map((p) => p.block)),
     offline: $('#conn-status').dataset.state !== 'online' && cameraReady,
-    message: !state.season ? 'Intersaison — le prochain cube arrive bientôt' : null,
+    message: worldMessage(),
   });
   minimap.selected = state.selected;
   minimap.draw();
@@ -757,13 +769,57 @@ new ResizeObserver(() => {
   minimap.draw();
 }).observe($('#viewport'));
 
+// Bêta privée : lien d'invitation (?invitation=CODE) mémorisé puis retiré de la barre d'adresse.
+{
+  const params = new URLSearchParams(location.search);
+  const inv = params.get('invitation');
+  if (inv) {
+    try {
+      localStorage.setItem(`tlb.invite.${profile}`, inv.trim().slice(0, 40));
+    } catch {
+      /* stockage indisponible : le code devra être saisi */
+    }
+    params.delete('invitation');
+    history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}${location.hash}`);
+  }
+}
 const socket = new GameSocket(profile, onMessage, onConnState, (text) => toast(text, 'info'));
+
+/** Lectures HTTP : le jeton du compte accompagne la requête (exigé par une bêta privée). */
+function apiFetch(path: string): Promise<Response> {
+  const token = socket.token;
+  return fetch(path, token ? { headers: { 'x-tlb-token': token } } : undefined);
+}
+
+$('#invite-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const code = $<HTMLInputElement>('#invite-input').value;
+  if (!code.trim()) return;
+  $('#invite-error').textContent = '';
+  socket.setInvite(code);
+  $('#invite-gate').hidden = true;
+  socket.restart();
+});
 
 function onConnState(s: ConnState) {
   const node = $('#conn-status');
   node.dataset.state = s;
   node.querySelector('.label')!.textContent =
-    s === 'online' ? 'Connecté' : s === 'connecting' ? 'Connexion…' : s === 'replaced' ? 'Ouvert ailleurs — toucher pour reprendre' : 'Reconnexion…';
+    s === 'online'
+      ? 'Connecté'
+      : s === 'connecting'
+        ? 'Connexion…'
+        : s === 'replaced'
+          ? 'Ouvert ailleurs — toucher pour reprendre'
+          : s === 'invite'
+            ? 'Invitation requise'
+            : socket.failures >= 3
+              ? 'Serveur indisponible'
+              : 'Reconnexion…';
+  if (s === 'invite') {
+    $('#invite-gate').hidden = false;
+    $<HTMLInputElement>('#invite-input').focus();
+  }
   node.title = node.querySelector('.label')!.textContent ?? '';
   if (s !== 'online') stopHold?.();
   syncWorld();
@@ -816,6 +872,8 @@ function onMessage(msg: ServerMessage) {
       receiveDiscoveries(msg.discoveries ?? null, true);
       receiveMissions(msg.missions ?? null);
       receiveCeremony(msg.ceremony ?? null);
+      state.pause = msg.pause ?? null;
+      $('#invite-gate').hidden = true;
       if (!msg.season) loadSeasons(); // intersaison : récupère la saison écoulée pour le panneau
       applyCube(face === null || face.size !== msg.cube?.size || lastSeasonId !== msg.season?.id);
       lastSeasonId = msg.season?.id ?? null;
@@ -907,7 +965,16 @@ function onMessage(msg: ServerMessage) {
       updatePresenceUi();
       for (const label of msg.unlocked ?? []) toast(`◈ Distinction de brigade : ${label}`, 'good');
       break;
+    case 'pause':
+      state.pause = msg.message;
+      toast(msg.message ? `Maintenance : ${msg.message}` : 'Fin de la maintenance : le minage reprend.', msg.message ? 'bad' : 'good');
+      renderHud();
+      break;
     case 'error':
+      if (msg.code === 'invite_required' || msg.code === 'invalid_invite' || msg.code === 'too_many_attempts') {
+        $('#invite-error').textContent = msg.code === 'invite_required' ? '' : msg.message;
+        break;
+      }
       toast(msg.message, 'bad');
       break;
     case 'pong':
@@ -924,6 +991,7 @@ const REJECT_TEXT: Record<MineRejectReason, string> = {
   layer_locked: 'Cette couche n\'est pas encore accessible.',
   rate_limited: 'Doucement ! 5 coups par seconde maximum.',
   daily_limit: 'Limite quotidienne de 4 h de minage actif atteinte.',
+  paused: 'Minage suspendu par l\'organisation.',
 };
 
 let lastRejectToast = 0;
@@ -937,6 +1005,7 @@ function rejectFeedback(reason: MineRejectReason | undefined, retryAfterMs?: num
   if (now - lastRejectToast < 1500 && reason !== 'daily_limit') return;
   lastRejectToast = now;
   let text = REJECT_TEXT[reason];
+  if (reason === 'paused' && state.pause) text += ` ${state.pause}`;
   if (reason === 'daily_limit' && retryAfterMs) {
     text += ` Reprise à ${new Date(serverNow() + retryAfterMs).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.`;
   }
@@ -1199,8 +1268,10 @@ function renderHud() {
     $('#playtime-fill').classList.toggle('full', used >= pt.limitMs);
   }
   const limited = !!pt && pt.usedMs >= pt.limitMs;
-  mineBtn.disabled = !cube || !state.season || limited;
-  $('#mine-hint').textContent = limited
+  mineBtn.disabled = !cube || !state.season || limited || state.pause !== null;
+  $('#mine-hint').textContent = state.pause !== null
+    ? 'Minage suspendu (maintenance)'
+    : limited
     ? 'Limite quotidienne atteinte'
     : !state.season
       ? 'En attente de la prochaine saison'
@@ -1321,7 +1392,7 @@ function renderProfile() {
 async function loadSeasons() {
   void loadHall();
   try {
-    const r = await fetch('/api/seasons');
+    const r = await apiFetch('/api/seasons');
     const data = (await r.json()) as { seasons: SeasonInfo[] };
     const ended = data.seasons.find((s) => s.status === 'ended');
     if (ended && (!state.lastEnded || ended.id >= state.lastEnded.id)) {
@@ -1363,7 +1434,7 @@ function endReasonText(r: SeasonInfo['endReason']) {
 }
 
 async function loadSeasonDetail(id: number) {
-  const r = await fetch(`/api/seasons/${id}`);
+  const r = await apiFetch(`/api/seasons/${id}`);
   if (!r.ok) return;
   const d = (await r.json()) as { season: SeasonInfo; players: { rank: number; name: string; hits: number }[]; brigades: { rank: number; name: string; hits: number }[] };
   const mk = (rows: { rank: number; name: string; hits: number }[]) =>
@@ -1532,7 +1603,7 @@ function renderProjection() {
   node.textContent = text;
 }
 
-fetch('/api/config')
+apiFetch('/api/config')
   .then((r) => r.json())
   .then((cfg: { rules: { maxActionsPerSecond: number; dailyActiveLimitMs: number; brigadeMinSize: number; brigadeMaxSize: number }; donation: { enabled: boolean; associationName: string; associationUrl: string; note: string } }) => {
     $('#rule-rate').textContent = String(cfg.rules.maxActionsPerSecond);

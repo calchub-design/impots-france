@@ -21,7 +21,9 @@ export type MineRejectReason =
   | 'already_destroyed'
   | 'layer_locked'
   | 'rate_limited'
-  | 'daily_limit';
+  | 'daily_limit'
+  /** Pause d'urgence décidée par l'administration (maintenance). */
+  | 'paused';
 
 export interface PublicPlayer {
   id: string;
@@ -147,6 +149,8 @@ export type ClientMessage =
       name?: string;
       /** Connexion via un fournisseur externe (non configuré dans le prototype). */
       auth?: { provider: 'google' | 'apple'; idToken: string };
+      /** Bêta privée : code d'invitation, exigé seulement pour CRÉER un compte. */
+      invite?: string;
     }
   | { t: 'mine'; actionId: string; layer: number; block: number }
   | { t: 'setName'; name: string }
@@ -196,6 +200,8 @@ export interface WelcomeMessage {
   missions?: MissionsState;
   /** Archive de la dernière saison terminée : cérémonie à revoir, ou en cours de diffusion. */
   ceremony?: SeasonArchive | null;
+  /** Pause d'urgence en cours (message de l'administration), sinon absent ou null. */
+  pause?: string | null;
 }
 
 export interface MineResultMessage {
@@ -249,6 +255,8 @@ export type ServerMessage =
   | { t: 'discovery'; seasonId: number; fragment: DiscoveryFragment; discoveries: DiscoveryLog }
   /** Missions du jour du joueur (avancement, mission accomplie, cosmétique débloqué, nouveau jour). */
   | { t: 'missions'; missions: MissionsState; completed?: string[]; unlocked?: string[] }
+  /** Pause d'urgence activée (message) ou levée (null). */
+  | { t: 'pause'; message: string | null }
   | { t: 'token'; token: string }
   | { t: 'seasonEnded'; season: SeasonInfo; nextSeasonAt: number | null; archive?: SeasonArchive }
   | { t: 'seasonStarted' }
@@ -267,6 +275,8 @@ export const CLOSE_CODES = {
   /** Jeton invalide ou révoqué. */
   invalidToken: 4003,
   helloTimeout: 4000,
+  /** Bêta privée : invitation absente ou invalide pour créer un compte. Pas de reconnexion automatique. */
+  inviteRequired: 4004,
 } as const;
 
 export function encode(msg: ServerMessage | ClientMessage): string {
