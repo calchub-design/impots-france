@@ -92,9 +92,14 @@ class Batch {
 
 const NEAR_CLIP = 0.12;
 const FOG_BUCKETS = 6;
-/** Panneau : largeur relative à l'arête du cube, rapport hauteur/largeur, altitude. */
-/** Écran holographique : largeur relative à l'arête du cube, rapport hauteur/largeur, altitude, position (au-delà du bord nord). */
-const BOARD = { width: 1.1, aspect: 0.5, lift: 0.1, y: -2 };
+/**
+ * Écran holographique : largeur relative à l'arête du cube, rapport hauteur/largeur,
+ * altitude, position (au-delà du bord nord). Plus large que le cube : en vue monumentale
+ * sur téléphone, il occupe presque toute la largeur et ses textes restent lisibles.
+ */
+const BOARD = { width: 1.5, aspect: 0.56, lift: 0.1, y: -2 };
+/** Hauteur réservée en bas de la scène aux pastilles d'information (px). */
+const HUD_BOTTOM = 40;
 const TEXTURE_STEPS = [384, 640, 896, 1200];
 
 export class MonolithView implements WorldView {
@@ -129,6 +134,12 @@ export class MonolithView implements WorldView {
   private framingKey = '';
   /** Largeur à l'écran du panneau lors de la dernière image (0 s'il est hors champ). */
   billboardScreenWidth = 0;
+  /** Rectangle à l'écran de l'écran holographique et son opacité (dernière image), ou null. */
+  billboardRect: { x: number; y: number; w: number; h: number } | null = null;
+  billboardAlpha = 0;
+  /** Appelé après une image où la place ou la lisibilité de l'écran holographique a changé. */
+  onBoardChange: () => void = () => {};
+  private boardStateKey = '';
   private readonly stars: { x: number; y: number; s: number; a: number; p: number }[] = [];
   private readonly boardCanvas: HTMLCanvasElement = document.createElement('canvas');
   /** Ciel mis en cache : redessiné seulement si la taille ou l'orientation changent sensiblement. */
@@ -211,8 +222,12 @@ export class MonolithView implements WorldView {
     const key = `${c.cubeSize}|${c.surfaceZ}|${c.viewW}|${c.viewH}`;
     if (key === this.framingKey) return;
     this.framingKey = key;
-    // Le cadrage monumental inclut l'écran holographique au-dessus du cube.
-    c.frameMonument(c.cubeSize * (BOARD.lift + BOARD.width * BOARD.aspect) * 0.85);
+    // Le cadrage monumental inclut l'écran holographique (largeur et hauteur réelles),
+    // centré dans la zone utile au-dessus des pastilles du bas.
+    const S = c.cubeSize;
+    const W = S * BOARD.width;
+    const zb = c.surfaceZ + S * BOARD.lift;
+    c.frameMonument(0, { width: W, y: BOARD.y, zb, zt: zb + W * BOARD.aspect }, { fillW: 0.94, fillH: 0.88, bottomInset: HUD_BOTTOM });
     c.minZoom = c.monumentalZoom;
     if (c.zoom < c.minZoom) c.zoom = c.minZoom;
   }
@@ -387,6 +402,8 @@ export class MonolithView implements WorldView {
     const cam = this.camera;
     const p = cam.pose;
     this.billboardScreenWidth = 0;
+    this.billboardRect = null;
+    this.billboardAlpha = 0;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.drawSkyCached(p);
     if (time < this.shakeUntil) {
@@ -405,6 +422,13 @@ export class MonolithView implements WorldView {
       else l.over?.(ctx, cam, time);
     }
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    // (Relu après drawBillboard, qui l'a peut-être renseigné : TypeScript ne le voit pas.)
+    const br = this.billboardRect as { x: number; y: number; w: number; h: number } | null;
+    const boardKey = br ? `${Math.round(br.x / 8)}|${Math.round(br.y / 8)}|${Math.round(br.w / 8)}|${Math.round(this.billboardAlpha * 10)}` : '';
+    if (boardKey !== this.boardStateKey) {
+      this.boardStateKey = boardKey;
+      this.onBoardChange();
+    }
     // (Le vignettage est un calque CSS composé par le navigateur : aucun coût ici.)
     if (this.state.offline || this.state.message) {
       ctx.fillStyle = 'rgba(4,5,13,0.6)';
@@ -761,7 +785,8 @@ export class MonolithView implements WorldView {
     const fogged = (c: RGB, fb: number) => css(mix(c, PALETTE.fog, (fb / (FOG_BUCKETS - 1)) * 0.82));
     // 1. Fonds des puits (couche du dessous), runes enfouies.
     for (let fb = 0; fb < FOG_BUCKETS; fb++) {
-      ctx.fillStyle = fogged(scale(below, lod ? 0.35 : 0.42), fb);
+      // Fonds de puits nettement plus sombres que les dessus : un trou se lit d'un coup d'œil.
+      ctx.fillStyle = fogged(scale(below, lod ? 0.22 : 0.24), fb);
       floors[fb].fill(ctx);
     }
     if (!this.lowFx) {
@@ -770,7 +795,8 @@ export class MonolithView implements WorldView {
       ctx.stroke(floorRunes);
     }
     // 2. Parois (nord éclairée, côtés plus sombres, sud dans l'ombre).
-    const wallShade = [0.68, 0.48, 0.36];
+    // Parois des puits plus sombres que les dessus : le trou se distingue du bloc intact.
+    const wallShade = [0.46, 0.32, 0.24];
     for (const [k, batch] of walls) {
       const fb = Math.floor(k / 4);
       ctx.fillStyle = fogged(scale(base, wallShade[k % 4]), fb);
@@ -783,7 +809,8 @@ export class MonolithView implements WorldView {
       const fb = Math.floor(k / 16);
       const v = Math.floor(k / 4) % 4;
       const dmg = k % 4;
-      ctx.fillStyle = fogged(scale(plates[v], 1 - dmg * 0.1), fb);
+      // Bloc abîmé : assombri par palier (un tiers, deux tiers, presque détruit).
+      ctx.fillStyle = fogged(scale(plates[v], 1 - dmg * 0.16), fb);
       batch.fill(ctx);
     }
     if (!lod && !this.lowFx) {
@@ -813,8 +840,8 @@ export class MonolithView implements WorldView {
       ctx.lineWidth = 1.4;
       ctx.stroke(activeGlyphs);
     }
-    ctx.strokeStyle = 'rgba(255,170,80,0.75)';
-    ctx.lineWidth = Math.max(1, cam.zoom * 0.03);
+    ctx.strokeStyle = 'rgba(255,170,80,0.95)';
+    ctx.lineWidth = Math.max(1.3, cam.zoom * 0.045);
     ctx.stroke(cracks);
     this.drawSeams(f, r, p, pulse);
     ctx.restore();
@@ -886,13 +913,13 @@ export class MonolithView implements WorldView {
     const pulse = this.reducedMotion ? 1 : 0.75 + 0.25 * Math.sin(time / 260);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    ctx.fillStyle = `rgba(65,224,255,${0.16 * pulse})`;
+    ctx.fillStyle = `rgba(65,224,255,${0.32 * pulse})`;
     ctx.beginPath();
     addPoly(ctx, q);
     ctx.fill();
     ctx.restore();
-    ctx.strokeStyle = `rgba(127,233,255,${pulse})`;
-    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = `rgba(150,240,255,${pulse})`;
+    ctx.lineWidth = 3;
     ctx.beginPath();
     addPoly(ctx, q);
     ctx.stroke();
@@ -983,6 +1010,11 @@ export class MonolithView implements WorldView {
     // Présence pleine en vue monumentale, discrète en vue de minage.
     const t = this.camera.t;
     const alpha = 0.28 + 0.72 * Math.min(1, t * 1.6);
+    const BR = this.camera.project(cx + rx * W / 2, cy + ry * W / 2, zb, p);
+    const xs = [TL[0], TR[0], BL[0], BR?.[0] ?? TR[0]];
+    const ys = [TL[1], TR[1], BL[1], BR?.[1] ?? BL[1]];
+    this.billboardRect = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+    this.billboardAlpha = alpha;
     const ctx = this.ctx;
     // Faisceaux de projection depuis l'arête nord du cube.
     ctx.save();

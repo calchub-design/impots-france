@@ -1,4 +1,5 @@
 import { CEREMONY_MS, CEREMONY_STEPS, ceremonyPosition, DONATION_AMOUNT_PENDING, type SeasonArchive } from '../../shared/ceremony.js';
+import { plural } from './text.js';
 
 /**
  * Cérémonie de fin de saison (DOM au-dessus de la scène, commune aux deux rendus).
@@ -43,7 +44,7 @@ export function ceremonyStep(step: (typeof CEREMONY_STEPS)[number]['id'], a: Sea
         kicker: 'Champion de saison',
         nodes: [
           h('div', 'cer-name', a.champion.name),
-          h('div', 'cer-sub', `Rang final : ${a.champion.rank} · ${NUM(a.champion.hits)} coups · ${NUM(a.champion.blocks)} blocs détruits`),
+          h('div', 'cer-sub', `Rang final : ${a.champion.rank} · ${NUM(a.champion.hits)} ${plural(a.champion.hits, 'coup')} · ${NUM(a.champion.blocks)} ${plural(a.champion.blocks, 'bloc détruit', 'blocs détruits')}`),
           ...(a.podium.length > 1
             ? [h('div', 'cer-podium', a.podium.slice(1).map((p) => `${p.rank}. ${p.name} (${NUM(p.hits)})`).join(' · '))]
             : []),

@@ -23,6 +23,17 @@ const NEAR = 0.05;
 
 export type Vec3 = [number, number, number];
 
+/** Écran holographique à inclure dans le cadrage monumental (unités du monde). */
+export interface MonumentBoard {
+  /** Largeur de l'écran. */
+  width: number;
+  /** Ordonnée (y) de son centre, au-delà du bord nord. */
+  y: number;
+  /** Altitudes du bas et du haut de l'écran. */
+  zb: number;
+  zt: number;
+}
+
 export interface Pose {
   t: number;
   /** Position de la caméra. */
@@ -58,6 +69,13 @@ export class PerspectiveCamera implements ViewCamera {
   surfaceZ = 32;
   /** Zoom auquel le cube entier tient à l'écran (calculé par `frameMonument`). */
   monumentalZoom = 6;
+  /**
+   * Décalage vertical de l'image en vue monumentale (px) : centre l'ensemble cube +
+   * écran holographique dans la zone utile (calculé par `frameMonument`). Nul en vue de minage.
+   */
+  monumentOffsetY = 0;
+  /** Décalage horizontal correspondant (l'écran holographique n'est pas centré sur le cube). */
+  monumentOffsetX = 0;
   /** Rotation choisie par le joueur autour du monolithe (vue monumentale). */
   yawUser = 0;
   private anim: { from: { x: number; y: number; zoom: number }; to: { x: number; y: number; zoom: number }; t: number; duration: number } | null = null;
@@ -94,11 +112,11 @@ export class PerspectiveCamera implements ViewCamera {
     const r: Vec3 = [Math.cos(yaw), Math.sin(yaw), 0];
     const u: Vec3 = [hx * sp, hy * sp, cp];
     const c: Vec3 = [tx - f[0] * d, ty - f[1] * d, tz - f[2] * d];
-    return { t, c, f, r, u, focal, cx: this.viewW / 2, cy: this.viewH / 2 };
+    return { t, c, f, r, u, focal, cx: this.viewW / 2 + this.monumentOffsetX * k, cy: this.viewH / 2 + this.monumentOffsetY * k };
   }
 
   get pose(): Pose {
-    const key = `${this.x}|${this.y}|${this.zoom}|${this.viewW}|${this.viewH}|${this.surfaceZ}|${this.cubeSize}|${this.monumentalZoom}|${this.yawUser}`;
+    const key = `${this.x}|${this.y}|${this.zoom}|${this.viewW}|${this.viewH}|${this.surfaceZ}|${this.cubeSize}|${this.monumentalZoom}|${this.monumentOffsetX}|${this.monumentOffsetY}|${this.yawUser}`;
     if (key !== this.cacheKey || !this.cache) {
       this.cacheKey = key;
       this.cache = this.poseAt(this.x, this.y, this.zoom, this.t);
@@ -191,24 +209,62 @@ export class PerspectiveCamera implements ViewCamera {
    * dans la vue. Quelques itérations suffisent (l'emprise varie presque
    * linéairement avec le zoom).
    */
-  frameMonument(extraTop = 0): number {
+  frameMonument(extraTop = 0, board?: MonumentBoard, opts: { fillW?: number; fillH?: number; bottomInset?: number } = {}): number {
     const S = this.cubeSize;
     const H = this.surfaceZ;
+    const fillW = opts.fillW ?? 0.84;
+    const fillH = opts.fillH ?? 0.7;
     const corners: [number, number, number][] = [];
     for (const x of [0, S]) for (const y of [0, S]) for (const z of [0, H + extraTop]) corners.push([x, y, z]);
+    // Points du cadrage pour une pose : coins du cube, puis ceux de l'écran holographique
+    // (il fait face à la caméra : ses coins dépendent de l'axe droit de la pose).
+    const points = (p: Pose): [number, number, number][] => {
+      if (!board) return corners;
+      const hx = (p.r[0] * board.width) / 2;
+      const hy = (p.r[1] * board.width) / 2;
+      const out = [...corners];
+      for (const s of [-1, 1]) for (const z of [board.zb, board.zt]) out.push([S / 2 + s * hx, board.y + s * hy, z]);
+      return out;
+    };
+    this.monumentOffsetY = 0;
+    this.monumentOffsetX = 0;
     let zoom = Math.min(this.viewW, this.viewH) / (S * 1.6);
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 10; i++) {
       const p = this.poseAt(S / 2, S / 2, zoom, 1);
-      const pts = corners.map(([x, y, z]) => this.project(x, y, z, p)).filter((q): q is [number, number, number] => q !== null);
-      if (pts.length < corners.length) {
+      const all = points(p);
+      const pts = all.map(([x, y, z]) => this.project(x, y, z, p)).filter((q): q is [number, number, number] => q !== null);
+      if (pts.length < all.length) {
         zoom *= 0.7;
         continue;
       }
       const w = Math.max(...pts.map((q) => q[0])) - Math.min(...pts.map((q) => q[0]));
       const h = Math.max(...pts.map((q) => q[1])) - Math.min(...pts.map((q) => q[1]));
-      zoom *= Math.min((this.viewW * 0.84) / w, (this.viewH * 0.7) / h);
+      zoom *= Math.min((this.viewW * fillW) / w, ((this.viewH - (opts.bottomInset ?? 0)) * fillH) / h);
     }
     this.monumentalZoom = Math.max(1, zoom);
+    // Vérification finale (la perspective n'est pas tout à fait linéaire en zoom) :
+    // on réduit légèrement tant que l'ensemble dépasse la zone visée.
+    for (let i = 0; i < 12; i++) {
+      const p = this.poseAt(S / 2, S / 2, this.monumentalZoom, 1);
+      const all = points(p);
+      const pts = all.map(([x, y, z]) => this.project(x, y, z, p)).filter((q): q is [number, number, number] => q !== null);
+      if (pts.length < all.length) break;
+      const w = Math.max(...pts.map((q) => q[0])) - Math.min(...pts.map((q) => q[0]));
+      const h = Math.max(...pts.map((q) => q[1])) - Math.min(...pts.map((q) => q[1]));
+      if (w <= this.viewW * fillW + 0.5 && h <= (this.viewH - (opts.bottomInset ?? 0)) * fillH + 0.5) break;
+      this.monumentalZoom *= 0.98;
+    }
+    if (board || opts.bottomInset) {
+      // Centre vertical de l'ensemble au milieu de la zone utile (au-dessus de `bottomInset`).
+      const p = this.poseAt(S / 2, S / 2, this.monumentalZoom, 1);
+      const pts = points(p).map(([x, y, z]) => this.project(x, y, z, p)).filter((q): q is [number, number, number] => q !== null);
+      if (pts.length) {
+        const xs = pts.map((q) => q[0]);
+        const ys = pts.map((q) => q[1]);
+        this.monumentOffsetX = this.viewW / 2 - (Math.min(...xs) + Math.max(...xs)) / 2;
+        this.monumentOffsetY = (this.viewH - (opts.bottomInset ?? 0)) / 2 - (Math.min(...ys) + Math.max(...ys)) / 2;
+      }
+    }
     return this.monumentalZoom;
   }
 

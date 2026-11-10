@@ -28,6 +28,7 @@ import { Scene } from './scene.js';
 import { TILT } from './world/camera.js';
 import { nearestAlive, toXY, type FaceData } from './world/face.js';
 import { BillboardLayer, billboardCameraY } from './world/billboard.js';
+import { boardReadable, rectsOverlap } from './world/labels.js';
 import { Minimap } from './world/minimap.js';
 import { brigadeColor, groupByBlock, PresenceLayer, presenceAge, type PresenceMarker } from './world/presence.js';
 import { MonolithView } from './world/monolith/view.js';
@@ -35,6 +36,7 @@ import { SurfaceView } from './world/surface.js';
 import type { PointerKind } from './world/gestures.js';
 import type { WorldView } from './world/view.js';
 import { layerColor, scale } from './world/monolith/material.js';
+import { countLabel, plural } from './text.js';
 
 // ---------------------------------------------------------------------------
 // État client (toujours dérivé des messages du serveur)
@@ -134,6 +136,11 @@ function chooseRenderer(): RendererKind {
 let rendererKind = chooseRenderer();
 const billboard = new BillboardLayer();
 const presence = new PresenceLayer();
+// Les pseudos des mineurs ne se posent jamais sur l'écran holographique.
+presence.dynamicReserved = () => {
+  const r = monolith?.billboardRect;
+  return r && monolith!.billboardAlpha > 0.3 ? [{ id: -100, x: r.x, y: r.y, w: r.w, h: r.h }] : [];
+};
 function createView(kind: RendererKind, canvas: HTMLCanvasElement): WorldView {
   const v: WorldView = kind === 'monolith' ? new MonolithView(canvas) : new SurfaceView(canvas);
   v.layers = [billboard, presence];
@@ -447,8 +454,8 @@ async function loadHall() {
               { cls: 'hall-card' },
               el('div', { cls: 'hall-head', textContent: a.seasonName === `Saison ${a.number}` ? a.seasonName : `Saison ${a.number} — ${a.seasonName}` }),
               el('div', { cls: 'small muted', textContent: `${seasonDates(a)} · ${endReasonLabel(a.endReason)}` }),
-              el('div', { cls: 'small', textContent: `Champion : ${a.champion ? `${a.champion.name} (${a.champion.hits.toLocaleString('fr-FR')} coups)` : 'aucun'}` }),
-              el('div', { cls: 'small', textContent: `Brigade championne : ${a.championBrigade ? `${a.championBrigade.emblem} ${a.championBrigade.name} (${a.championBrigade.hits.toLocaleString('fr-FR')} coups, ${a.championBrigade.members} membres)` : 'aucune qualifiée'}` }),
+              el('div', { cls: 'small', textContent: `Champion : ${a.champion ? `${a.champion.name} (${countLabel(a.champion.hits, 'coup')})` : 'aucun'}` }),
+              el('div', { cls: 'small', textContent: `Brigade championne : ${a.championBrigade ? `${a.championBrigade.emblem} ${a.championBrigade.name} (${countLabel(a.championBrigade.hits, 'coup')}, ${countLabel(a.championBrigade.members, 'membre')})` : 'aucune qualifiée'}` }),
               el('div', { cls: 'small', textContent: `Pierre finale : ${a.finalStone ? a.finalStone.name : 'non attribuée'}` }),
               el('div', { cls: 'small', textContent: `Contribution totale : ${a.totals.hits.toLocaleString('fr-FR')} coups de ${a.totals.miners} mineur${a.totals.miners > 1 ? 's' : ''} · ${a.totals.blocksDestroyed.toLocaleString('fr-FR')} / ${a.totals.totalBlocks.toLocaleString('fr-FR')} blocs` }),
               el('div', { cls: 'small', textContent: `Découvertes : ${a.discoveries.length} / ${a.discoveriesTotal}${a.discoveries.length ? ` (${a.discoveries.map((f) => f.title).join(', ')})` : ''}` }),
@@ -495,11 +502,21 @@ function updateBannerVisibility() {
   $('#viewport').classList.toggle('monumental', monumental);
   // Monolithe : en vue de minage, le panneau lointain reste petit (bandeau utile) ; on ne
   // masque le bandeau que si la caméra s'est élevée vers le panneau et qu'il est bien lisible.
+  // Monolithe : l'écran holographique remplace le bandeau dès qu'il est lisible (taille,
+  // opacité, visible aux deux tiers) ; en vue de minage d'un grand cube, il est lointain
+  // et estompé, le bandeau reste utile.
+  const holo = monolith?.billboardRect ?? null;
   const boardShown = monolith
-    ? monumental || ((monolith.camera as { t: number }).t > 0.25 && monolith.billboardScreenWidth > world.camera.viewW * 0.35)
+    ? monumental || boardReadable(holo, monolith.billboardAlpha, world.camera.viewW, world.camera.viewH)
     : world.camera.visibleWorld().minY < -2;
   const visible = !(billboard.data && boardShown);
   const banner = $('#banner');
+  // La mini-carte s'efface quand l'écran holographique passe dessous (petits cubes, zooms intermédiaires).
+  const mapBox = $('.map-box');
+  const v = $('#viewport').getBoundingClientRect();
+  const m = mapBox.getBoundingClientRect();
+  const covered = !!monolith && !!holo && monolith.billboardAlpha > 0.3 && rectsOverlap(holo, { x: m.left - v.left, y: m.top - v.top, w: m.width, h: m.height }, 4);
+  mapBox.classList.toggle('yield', covered);
   reservePresenceZones();
   if (banner.hidden === !visible) return;
   banner.hidden = !visible;
@@ -536,6 +553,7 @@ function updatePresenceUi() {
   presence.myBrigade = state.brigade?.name ?? null;
   const live = presence.markers.filter((m) => m.playerId !== presence.myId && presenceAge(m, now) <= PRESENCE_WINDOW_MS);
   $('#hud-presence').textContent = String(live.length);
+  $('#hud-presence-unit').textContent = plural(live.length, 'actif');
   minimap.markers = [...groupByBlock(live, now).entries()].map(([idx, l]) => ({ idx, color: brigadeColor(l[0].brigadeName) }));
   ($('#brigade-go') as HTMLButtonElement).hidden = !state.brigade;
   // Boutons « Rejoindre » des membres actifs (onglet Brigade) : suivent la présence réelle.
@@ -613,6 +631,7 @@ function handleCameraMove() {
   saveCamera();
 }
 world.onCameraMove = handleCameraMove;
+if (world instanceof MonolithView) world.onBoardChange = updateBannerVisibility;
 world.onTap = handleTap;
 
 function handleTap(wx: number, wy: number, kind: PointerKind) {
@@ -724,6 +743,7 @@ function swapRenderer(kind: RendererKind) {
   v.lowFx = prev.lowFx;
   v.onTap = handleTap;
   v.onCameraMove = handleCameraMove;
+  if (v instanceof MonolithView) v.onBoardChange = updateBannerVisibility;
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   world = v;
   monolith = v instanceof MonolithView ? v : null;
@@ -1257,6 +1277,7 @@ function renderHud() {
   $('#hud-layer').textContent = cube ? `${Math.min(cube.currentLayer + 1, cube.size)} / ${cube.size}` : '—';
   $('#hud-progress').textContent = cube ? fmtPct(cube.destroyedBlocks / cube.totalBlocks) : '—';
   $('#hud-hits').textContent = state.me.hits.toLocaleString('fr-FR');
+  $('#hud-hits-unit').textContent = plural(state.me.hits, 'coup');
   $('#hud-rank').textContent = state.me.rank ? `#${state.me.rank}` : '—';
   $('#hud-online').textContent = String(state.online);
   renderSignalHint();
@@ -1316,7 +1337,7 @@ function renderBoards() {
             { cls: b.brigadeId === state.brigade?.id ? 'me' : '' },
             el('span', { cls: 'rank', textContent: `#${b.rank}` }),
             el('span', { cls: 'name', textContent: b.name }),
-            el('span', { cls: 'sub', textContent: `${b.members} membres${b.eligible ? '' : ' · en formation'}` }),
+            el('span', { cls: 'sub', textContent: `${countLabel(b.members, 'membre')}${b.eligible ? '' : ' · en formation'}` }),
             el('span', { cls: 'score', textContent: b.hits.toLocaleString('fr-FR') }),
           ),
         )

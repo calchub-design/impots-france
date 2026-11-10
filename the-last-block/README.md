@@ -44,7 +44,7 @@ npm start         # sert le client et le WebSocket sur PORT (8080)
 ## Tests
 
 ```bash
-npm test             # 229 tests Vitest (18 fichiers), ~20 s
+npm test             # 239 tests Vitest (19 fichiers), ~20 s
 npm run typecheck    # TypeScript (serveur, client, tests, scripts)
 npm run build && npm run e2e -- --rendu monolithe   # test réel : deux Chromium (mobile tactile + bureau), 31 vérifications
 npm run e2e -- --rendu classique                     # mêmes scénarios avec le rendu classique
@@ -53,6 +53,7 @@ npm run e2e:missions -- --rendu monolithe            # missions du jour : deux n
 npm run e2e:brigades -- --rendu monolithe            # objectifs de brigade : deux navigateurs + robots membres (aussi --rendu classique)
 npm run e2e:ceremonie -- --rendu monolithe           # cérémonie de fin de saison et Hall des champions (aussi --rendu classique, --cpu 4)
 npm run e2e:beta -- --rendu monolithe                # bêta privée : invitation, pause, coupure serveur, Android + iPhone émulés (aussi --rendu classique)
+npm run captures:finition                            # captures de contrôle visuel (cubes 4/12/40, iPhone et ordinateur)
 npm run calibrate -- --beta                          # saison de 48 h : préréglages et matrice de risques (15/20 invités)
 npm run backup / npm run restore                     # sauvegarde à chaud vérifiée / restauration serveur arrêté
 npm run loadtest -- --bots 100 --seconds 15
@@ -79,6 +80,7 @@ npm run calibrate -- --days 30 --players 200 --minutes 30
 | `tests/ceremony.test.ts` | cérémonie et Hall : clôture unique (dernier bloc simultané), échéance, clôture administrative, sans contribution, brigade non qualifiée, archive figée, redémarrage, WebSocket et HTTP |
 | `tests/brigades.test.ts` | objectifs de brigade : brigades de 2, 5 et 10, arrivées et départs, dissolution, doublons, aucun effet sur le jeu, redémarrage, WebSocket |
 | `tests/missions.test.ts` | missions quotidiennes : seuils, doublons, deux joueurs, jour UTC, historique, cosmétique, aucun effet sur le jeu, redémarrage, WebSocket |
+| `tests/finition.test.ts` | finition visuelle : accords en nombre, lisibilité de l'écran holographique (bandeau, mini-carte, pseudos), cadrage monumental centré pour plusieurs tailles de cube et d'écran |
 | `tests/beta.test.ts` | bêta privée : configuration refusée, invitations (usage, révocation, expiration, empreinte), comptes de test, pause d'urgence, statistiques et rétention, export pseudonymisé, sauvegarde et restauration, WebSocket et HTTP en mode invitation |
 | `tests/discoveries.test.ts` | découvertes « Le Signal » : couches déclencheuses, révélation exacte et unique, indices, fin de saison, nouvelle saison, redémarrage, réconciliation, WebSocket |
 

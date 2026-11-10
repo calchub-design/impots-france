@@ -7,6 +7,8 @@
  * éventuelle (Pierre finale en jeu, couche presque terminée).
  */
 
+import { countLabel } from '../../text.js';
+
 export interface HoloData {
   seasonName: string;
   countdown: string;
@@ -45,6 +47,18 @@ function fit(ctx: CanvasRenderingContext2D, text: string, max: number): string {
   let t = text;
   while (t.length > 1 && ctx.measureText(t + '…').width > max) t = t.slice(0, -1);
   return t + '…';
+}
+
+/**
+ * Police réduite jusqu'à ce que le texte tienne (au plus jusqu'à `min` × taille), puis
+ * troncature en dernier recours : les libellés courts ne sont jamais coupés.
+ */
+function fitFont(ctx: CanvasRenderingContext2D, text: string, font: (px: number) => string, size: number, max: number, min = 0.62): string {
+  for (let k = 1; k >= min - 1e-9; k -= 0.04) {
+    ctx.font = font(size * k);
+    if (ctx.measureText(text).width <= max) return text;
+  }
+  return fit(ctx, text, max);
 }
 
 function chamfer(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, c: number) {
@@ -100,27 +114,26 @@ export function paintHologram(ctx: CanvasRenderingContext2D, w: number, h: numbe
   ctx.shadowColor = `rgba(${CYAN},0.8)`;
   ctx.shadowBlur = u * 2;
   ctx.fillStyle = `rgba(${CYAN},1)`;
-  ctx.font = `800 ${u * 9}px system-ui, sans-serif`;
+  ctx.font = `800 ${u * 10.5}px system-ui, sans-serif`;
   ctx.textAlign = 'left';
   ctx.fillText(fit(ctx, `◈ ${d.seasonName.toUpperCase()}`, w * 0.45), left, u * 14);
   ctx.textAlign = 'right';
-  ctx.font = `700 ${u * 7}px system-ui, sans-serif`;
-  ctx.fillStyle = `rgba(${CYAN},0.85)`;
-  ctx.fillText(fit(ctx, d.countdown.toUpperCase(), w * 0.42), right, u * 14);
+  ctx.fillStyle = `rgba(${CYAN},0.9)`;
+  ctx.fillText(fitFont(ctx, d.countdown.toUpperCase(), (px) => `700 ${px}px system-ui, sans-serif`, u * 8.5, w * 0.42), right, u * 14);
   ctx.fillStyle = `rgba(${CYAN},0.35)`;
   ctx.fillRect(left, u * 21, right - left, u * 0.5);
 
   // Colonne gauche : top 3
-  const colW = (right - left) * 0.6;
+  const colW = (right - left) * 0.58;
   ctx.textAlign = 'left';
-  ctx.font = `700 ${u * 5.5}px system-ui, sans-serif`;
-  ctx.fillStyle = `rgba(${CYAN},0.75)`;
-  ctx.fillText('MEILLEURS MINEURS', left, u * 28.5);
+  ctx.font = `700 ${u * 7}px system-ui, sans-serif`;
+  ctx.fillStyle = `rgba(${CYAN},0.85)`;
+  ctx.fillText('MEILLEURS MINEURS', left, u * 29);
   for (let i = 0; i < 3; i++) {
     const e = d.top[i];
-    const y = u * (40 + i * 13.5);
+    const y = u * (41.5 + i * 13.5);
     // Badge hexagonal
-    const r = u * 5;
+    const r = u * 5.4;
     const bx = left + r;
     ctx.beginPath();
     for (let k = 0; k < 6; k++) {
@@ -135,22 +148,21 @@ export function paintHologram(ctx: CanvasRenderingContext2D, w: number, h: numbe
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#10121f';
     ctx.textAlign = 'center';
-    ctx.font = `800 ${u * 6}px system-ui, sans-serif`;
+    ctx.font = `800 ${u * 7}px system-ui, sans-serif`;
     ctx.fillText(String(i + 1), bx, y + u * 0.3);
     ctx.textAlign = 'left';
     ctx.shadowColor = e ? e.color : 'transparent';
     ctx.shadowBlur = u * 2;
     ctx.fillStyle = e ? e.color : 'rgba(255,255,255,0.35)';
     const scoreTxt = e ? e.hits.toLocaleString('fr-FR') : '';
-    ctx.font = `700 ${u * 8}px ui-monospace, Menlo, monospace`;
+    ctx.font = `700 ${u * 10}px ui-monospace, Menlo, monospace`;
     const sw = ctx.measureText(scoreTxt).width;
-    ctx.font = `800 ${u * 9}px system-ui, sans-serif`;
-    ctx.fillText(fit(ctx, e ? e.name : '—', colW - r * 2 - sw - u * 6), left + r * 2 + u * 3, y);
+    ctx.fillText(fitFont(ctx, e ? e.name : '—', (px) => `800 ${px}px system-ui, sans-serif`, u * 11, colW - r * 2 - sw - u * 6), left + r * 2 + u * 3, y);
     if (e) {
       ctx.textAlign = 'right';
       ctx.shadowColor = `rgba(${CYAN},0.7)`;
       ctx.fillStyle = '#eaf9ff';
-      ctx.font = `700 ${u * 8}px ui-monospace, Menlo, monospace`;
+      ctx.font = `700 ${u * 10}px ui-monospace, Menlo, monospace`;
       ctx.fillText(scoreTxt, left + colW, y);
     }
     ctx.shadowBlur = 0;
@@ -186,33 +198,30 @@ export function paintHologram(ctx: CanvasRenderingContext2D, w: number, h: numbe
   ctx.fillStyle = '#ffffff';
   ctx.shadowColor = GOLD;
   ctx.shadowBlur = u * 2;
-  ctx.font = `800 ${u * 10}px system-ui, sans-serif`;
-  ctx.fillText(fit(ctx, fmtPct(d.progress), rr * 1.8), cx, cy - u * 3);
+  ctx.fillText(fitFont(ctx, fmtPct(d.progress), (px) => `800 ${px}px system-ui, sans-serif`, u * 12, rr * 1.7), cx, cy - u * 4);
   ctx.shadowBlur = 0;
   ctx.fillStyle = `rgba(${CYAN},0.85)`;
-  ctx.font = `700 ${u * 4.6}px system-ui, sans-serif`;
-  ctx.fillText('CUBE EXCAVÉ', cx, cy + u * 5.5);
-  ctx.fillText(`COUCHE ${Math.min(d.layer + 1, d.layers)} / ${d.layers}`, cx, cy + u * 11);
+  const sub = (px: number) => `700 ${px}px system-ui, sans-serif`;
+  ctx.fillText(fitFont(ctx, 'EXCAVÉ', sub, u * 6, rr * 1.6), cx, cy + u * 6);
+  ctx.fillText(fitFont(ctx, `COUCHE ${Math.min(d.layer + 1, d.layers)}/${d.layers}`, sub, u * 6, rr * 1.6), cx, cy + u * 12.5);
 
   // Pied : brigade en tête, puis l'alerte éventuelle sur sa propre ligne (jamais tronquée).
   const alert = holoAlert(d);
   ctx.fillStyle = `rgba(${CYAN},0.35)`;
   ctx.fillRect(left, u * (alert ? 77 : 80), right - left, u * 0.5);
   ctx.textAlign = 'left';
-  ctx.font = `700 ${u * (alert ? 5.6 : 6.8)}px system-ui, sans-serif`;
   ctx.fillStyle = '#eaf9ff';
   const brig = d.brigade
-    ? `⚑ EN TÊTE : ${d.brigade.name} — ${d.brigade.hits.toLocaleString('fr-FR')} coups · ${d.brigade.eligible ? 'provisoire' : 'en formation'}`
+    ? `⚑ EN TÊTE : ${d.brigade.name} — ${countLabel(d.brigade.hits, 'coup')} · ${d.brigade.eligible ? 'provisoire' : 'en formation'}`
     : '⚑ AUCUNE BRIGADE EN TÊTE POUR L\'INSTANT';
-  ctx.fillText(fit(ctx, brig, right - left), left, u * (alert ? 84 : 89));
+  ctx.fillText(fitFont(ctx, brig, (px) => `700 ${px}px system-ui, sans-serif`, u * (alert ? 6.6 : 8), right - left), left, u * (alert ? 84 : 89));
   if (alert) {
     const pulse = reducedMotion ? 1 : 0.6 + 0.4 * Math.sin(time / 220);
     ctx.textAlign = 'center';
     ctx.shadowColor = alert.startsWith('◈') ? '#41e0ff' : '#ffb35c';
     ctx.shadowBlur = u * 3;
     ctx.fillStyle = alert.startsWith('◈') ? `rgba(160,240,255,${pulse})` : `rgba(255,190,110,${pulse})`;
-    ctx.font = `800 ${u * 5.8}px system-ui, sans-serif`;
-    ctx.fillText(fit(ctx, alert, right - left), (left + right) / 2, u * 92);
+    ctx.fillText(fitFont(ctx, alert, (px) => `800 ${px}px system-ui, sans-serif`, u * 6.6, right - left), (left + right) / 2, u * 91.5);
     ctx.shadowBlur = 0;
   }
 }

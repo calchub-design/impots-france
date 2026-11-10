@@ -66,6 +66,30 @@ export function placeLabels(reqs: LabelRequest[], viewW: number, viewH: number, 
   return placed;
 }
 
+export interface ScreenRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Deux rectangles se chevauchent-ils (avec une marge en px) ? */
+export function rectsOverlap(a: ScreenRect, b: ScreenRect, margin = 0): boolean {
+  return a.x < b.x + b.w + margin && b.x < a.x + a.w + margin && a.y < b.y + b.h + margin && b.y < a.y + a.h + margin;
+}
+
+/**
+ * L'écran holographique est-il lisible à l'écran ? Assez large (35 % de la vue),
+ * assez opaque (il s'estompe en vue de minage) et visible aux deux tiers au moins.
+ * Dans ce cas le bandeau compact, qui répète le même classement, est masqué.
+ */
+export function boardReadable(rect: ScreenRect | null, alpha: number, viewW: number, viewH: number): boolean {
+  if (!rect || rect.w <= 0 || rect.h <= 0 || alpha < 0.45 || rect.w < viewW * 0.35) return false;
+  const vw = Math.max(0, Math.min(viewW, rect.x + rect.w) - Math.max(0, rect.x));
+  const vh = Math.max(0, Math.min(viewH, rect.y + rect.h) - Math.max(0, rect.y));
+  return (vw * vh) / (rect.w * rect.h) >= 0.66;
+}
+
 /**
  * Découpe un message en lignes tenant dans `maxWidth` (mesure du contexte courant),
  * au plus `maxLines` lignes ; la dernière est terminée par « … » si le texte déborde.

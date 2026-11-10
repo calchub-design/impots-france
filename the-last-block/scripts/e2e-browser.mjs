@@ -342,6 +342,19 @@ try {
   if (RENDU === 'monolithe') {
     const mono = await A.evaluate(() => ({ t: window.tlb.world.camera.t, cls: document.querySelector('#viewport').classList.contains('monumental') }));
     await A.screenshot({ path: join(OUT, 'mobile-vue-monumentale.png') });
+    // Finition : écran holographique entier, large et lisible ; ni bandeau ni mini-carte en double.
+    const holo = await A.evaluate(() => {
+      const w = window.tlb.world;
+      const r = w.billboardRect;
+      const map = getComputedStyle(document.querySelector('.map-box')).opacity;
+      return { r, vw: w.camera.viewW, vh: w.camera.viewH, alpha: w.billboardAlpha, banner: document.querySelector('#banner').hidden, map };
+    });
+    const inView = holo.r && holo.r.x >= 0 && holo.r.y >= 0 && holo.r.x + holo.r.w <= holo.vw && holo.r.y + holo.r.h <= holo.vh;
+    check(
+      'vue monumentale : écran holographique entier, ≥ 55 % de la largeur, sans bandeau ni mini-carte',
+      inView && holo.r.w >= holo.vw * 0.55 && holo.alpha > 0.95 && holo.banner && holo.map === '0',
+      holo.r ? `${Math.round(holo.r.w)} px sur ${holo.vw}, x ${Math.round(holo.r.x)}–${Math.round(holo.r.x + holo.r.w)}, y ${Math.round(holo.r.y)}` : 'absent',
+    );
     await A.tap('#overview-btn');
     await A.waitForTimeout(800);
     const back = await A.evaluate(() => window.tlb.world.camera.t);

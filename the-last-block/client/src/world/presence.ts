@@ -55,6 +55,8 @@ export class PresenceLayer implements WorldLayer {
   reducedMotion = false;
   /** Zones de l'écran couvertes par l'interface (bandeau, mini-carte…), à laisser libres. */
   reserved: PlacedLabel[] = [];
+  /** Zones mobiles recalculées à chaque image (écran holographique du monolithe). */
+  dynamicReserved: () => PlacedLabel[] = () => [];
 
   /** Animation continue seulement pendant le balancement des pioches (observations < 2,5 s). */
   animating() {
@@ -154,7 +156,7 @@ export class PresenceLayer implements WorldLayer {
         labels.push({ text, color, alpha, ally, ax: sx, ay: top - d - 2 });
       }
     }
-    const placed = placeLabels(reqs, W, H, this.reserved);
+    const placed = placeLabels(reqs, W, H, [...this.reserved, ...this.dynamicReserved()]);
     ctx.save();
     ctx.font = LABEL_FONT;
     ctx.textBaseline = 'middle';

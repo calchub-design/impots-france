@@ -1,4 +1,5 @@
 import type { BrigadeObjectivesInfo } from '../../shared/brigades.js';
+import { plural } from './text.js';
 
 /**
  * Identité, objectifs et distinctions de brigade (DOM, commun aux deux rendus).
@@ -46,7 +47,7 @@ export function renderBrigadeObjectives(dom: BrigadeDom, o: BrigadeObjectivesInf
   dom.emblem.className = `brigade-emblem frame-${o.frame}`;
   dom.emblem.style.setProperty('--bc', color);
   dom.title.textContent = o.title ?? 'Aucun titre pour l\'instant';
-  dom.totals.textContent = `Contribution collective : ${NUM(o.totals.hits)} coups · ${NUM(o.totals.blocks)} blocs détruits cette saison`;
+  dom.totals.textContent = `Contribution collective : ${NUM(o.totals.hits)} ${plural(o.totals.hits, 'coup')} · ${NUM(o.totals.blocks)} ${plural(o.totals.blocks, 'bloc détruit', 'blocs détruits')} cette saison`;
   if (!o.objectives.length) {
     dom.objectives.replaceChildren(h('li', 'muted', 'Pas d\'objectif pendant l\'intersaison.'));
   } else {

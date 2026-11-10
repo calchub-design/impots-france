@@ -2097,3 +2097,9 @@ body[data-renderer='monolith'] .vignette {
   color: var(--bad);
   font-size: 0.85rem;
 }
+
+/* Mini-carte effacée quand l'écran holographique du monolithe passe dessous. */
+.map-box.yield {
+  opacity: 0;
+  pointer-events: none;
+}
