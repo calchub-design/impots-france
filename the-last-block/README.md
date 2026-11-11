@@ -53,6 +53,7 @@ npm run e2e:missions -- --rendu monolithe            # missions du jour : deux n
 npm run e2e:brigades -- --rendu monolithe            # objectifs de brigade : deux navigateurs + robots membres (aussi --rendu classique)
 npm run e2e:ceremonie -- --rendu monolithe           # cérémonie de fin de saison et Hall des champions (aussi --rendu classique, --cpu 4)
 npm run e2e:beta -- --rendu monolithe                # bêta privée : invitation, pause, coupure serveur, Android + iPhone émulés (aussi --rendu classique)
+npm run e2e:finition                                # couche terminée qui s'efface dans le pointillé, « mouvement réduit », parois des puits
 npm run captures:finition                            # captures de contrôle visuel (cubes 4/12/40, iPhone et ordinateur)
 npm run calibrate -- --beta                          # saison de 48 h : préréglages et matrice de risques (15/20 invités)
 npm run backup / npm run restore                     # sauvegarde à chaud vérifiée / restauration serveur arrêté

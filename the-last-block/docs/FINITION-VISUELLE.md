@@ -93,3 +93,34 @@ Le seuil de passage automatique en effets réduits reste à 14 ms. Le test de pe
 | Faces et volume excavé (iPhone) | ![](captures/finition/faces-et-volume-excave-iphone.png) |
 | Cube creusé (ordinateur) | ![](captures/finition/cube-creuse-bureau.png) |
 | Commandes nommées et pseudos groupés | ![](captures/finition/commandes-et-pseudos-iphone.png) |
+
+---
+
+# Finition 3 : parois des puits et couche retirée
+
+**Parois des puits (vue de minage).** Avant, les parois avaient une teinte uniforme par orientation. Désormais :
+- elles prennent la teinte de la **strate** de la couche courante, la même que sur les faces du cube, et le fond du puits celle de la strate du dessous ;
+- chaque bloc garde sa propre nuance de pierre (trois variantes) ;
+- une **ligne de lit** fine court à mi-hauteur et un **rebord éclairé** souligne le haut de chaque paroi ;
+- un trou se lit comme une coupe dans la roche.
+
+Les parois restent plus sombres que les dessus, ce qui préserve le contraste mesuré en finition 1. Le rendu en vue de minage reste mesuré entre 2,0 et 2,8 ms par image, à 61 images/s, selon les exécutions.
+
+**Couche retirée qui s'efface dans le pointillé.** Quand une couche est terminée, elle ne disparaît plus d'un coup :
+- elle reste un instant comme une dalle de pierre ;
+- son contour lumineux devient pointillé et elle s'efface dans le volume déjà excavé, en 1,4 s ;
+- la graduation ambrée de cette couche s'allume au même moment.
+
+La séquence est discrète en vue de minage et pleine en vue monumentale. Avec « mouvement réduit », il n'y a aucune animation et l'état final s'affiche tout de suite. L'effet est **purement visuel** : la nouvelle couche est jouable immédiatement.
+
+**Test navigateur `npm run e2e:finition`** (6 vérifications) :
+- une vraie couche est terminée par un autre joueur pendant qu'on regarde ;
+- l'animation démarre puis se termine en moins de 2 s ;
+- un second joueur en « mouvement réduit » ne voit aucune animation ;
+- rien n'est rejoué au rechargement ;
+- aucune erreur JavaScript.
+
+| | |
+|---|---|
+| Couche retirée : avant, début, milieu, après | ![](captures/finition/couche-retiree-sequence.png) |
+| Parois des puits, avant / après (agrandi) | ![](captures/finition/parois-des-puits.png) |

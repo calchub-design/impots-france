@@ -28,7 +28,8 @@
     "e2e:brigades": "node scripts/e2e-brigades.mjs",
     "e2e:ceremonie": "node scripts/e2e-ceremonie.mjs",
     "e2e:beta": "node scripts/e2e-beta.mjs",
-    "captures:finition": "node scripts/captures-finition.mjs"
+    "captures:finition": "node scripts/captures-finition.mjs",
+    "e2e:finition": "node scripts/e2e-finition.mjs"
   },
   "dependencies": {
     "ws": "^8.22.1"

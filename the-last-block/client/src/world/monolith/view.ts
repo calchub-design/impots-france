@@ -140,6 +140,9 @@ export class MonolithView implements WorldView {
   /** Appelé après une image où la place ou la lisibilité de l'écran holographique a changé. */
   onBoardChange: () => void = () => {};
   private boardStateKey = '';
+  /** Dernière couche vue et chute en cours (couche terminée qui s'efface dans le pointillé). */
+  private lastLayer: { size: number; layer: number } | null = null;
+  private layerDrop: { layer: number; at: number } | null = null;
   private readonly stars: { x: number; y: number; s: number; a: number; p: number }[] = [];
   private readonly boardCanvas: HTMLCanvasElement = document.createElement('canvas');
   /** Ciel mis en cache : redessiné seulement si la taille ou l'orientation changent sensiblement. */
@@ -211,6 +214,15 @@ export class MonolithView implements WorldView {
     if (f) {
       this.camera.cubeSize = Math.max(f.size, this.state.cubeSize);
       this.camera.surfaceZ = Math.max(1, this.state.cubeSize - f.layer);
+      // Couche terminée (même cube, couche suivante) : animation de chute ; nouvelle saison
+      // ou premier affichage : rien.
+      const prev = this.lastLayer;
+      if (prev && prev.size === f.size && f.layer === prev.layer + 1 && !this.reducedMotion) {
+        this.layerDrop = { layer: prev.layer, at: performance.now() };
+      } else if (!prev || prev.size !== f.size || f.layer < prev.layer) {
+        this.layerDrop = null;
+      }
+      this.lastLayer = { size: f.size, layer: f.layer };
     }
     this.reframe();
     this.requestRender();
@@ -359,7 +371,7 @@ export class MonolithView implements WorldView {
     this.draw(t);
     this.frameTimes.push(performance.now() - t0);
     if (this.frameTimes.length > 120) this.frameTimes.shift();
-    const fxActive = this.particles.length > 0 || this.flashes.length > 0 || this.texts.length > 0 || t < this.shakeUntil;
+    const fxActive = this.particles.length > 0 || this.flashes.length > 0 || this.texts.length > 0 || t < this.shakeUntil || this.layerDrop !== null;
     const layersActive = this.layers.some((l) => l.animating?.());
     // Pulsation lente des lignes d'énergie : uniquement si visible et sans « mouvement réduit ».
     const ambient = !this.reducedMotion && !this.lowFx && this.state.face !== null && document.visibilityState === 'visible';
@@ -538,6 +550,7 @@ export class MonolithView implements WorldView {
     const H = cam.surfaceZ;
     const removed = S - H;
     const k = Math.max(0, Math.min(1, (cam.t - 0.35) / 0.4));
+    this.drawLayerDrop(p, k);
     if (removed < 1 || k <= 0) return;
     const ctx = this.ctx;
     const corners: [number, number][] = [[0, 0], [S, 0], [S, S], [0, S]];
@@ -600,6 +613,98 @@ export class MonolithView implements WorldView {
         ctx.moveTo(a[0], a[1]);
         ctx.lineTo(b[0], b[1]);
       }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Couche tout juste terminée : pendant un peu plus d'une seconde, elle reste visible comme
+   * une dalle de pierre qui pâlit et s'efface dans le pointillé du volume excavé, et sa
+   * graduation s'allume. Discrète en vue de minage, pleine en vue monumentale. Rien avec
+   * « mouvement réduit ». Purement visuel : la surface jouable a déjà changé.
+   */
+  private drawLayerDrop(p: Pose, k: number) {
+    const drop = this.layerDrop;
+    if (!drop) return;
+    const DUR = 1400;
+    const age = performance.now() - drop.at;
+    if (age >= DUR || age < 0) {
+      this.layerDrop = null;
+      return;
+    }
+    const cam = this.camera;
+    const S = cam.cubeSize;
+    const H = cam.surfaceZ;
+    const e = age / DUR;
+    // Fondu lent au début (la dalle reste lisible), rapide à la fin.
+    const fade = Math.pow(1 - e, 1.4);
+    const ctx = this.ctx;
+    const corners: [number, number][] = [[0, 0], [S, 0], [S, S], [0, S]];
+    const L = corners.map(([x, y]) => cam.project(x, y, H, p));
+    const U = corners.map(([x, y]) => cam.project(x, y, H + 1, p));
+    if (L.some((q) => !q) || U.some((q) => !q)) return;
+    const lo = L as [number, number, number][];
+    const up = U as [number, number, number][];
+    const { ids, first } = this.strata(S);
+    const sid = ids[Math.min(S - 1, drop.layer)];
+    const col = scale(layerColor(first[sid], S), 0.92 + hash2(sid, S, 31) * 0.16);
+    const strength = 0.35 + 0.65 * k;
+    ctx.save();
+    // Faces de la dalle tournées vers la caméra (côtés), puis le dessus.
+    const C = p.c;
+    const normals: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) % 4;
+      const [nx, ny] = normals[i];
+      const mx = (corners[i][0] + corners[j][0]) / 2;
+      const my = (corners[i][1] + corners[j][1]) / 2;
+      if ((C[0] - mx) * nx + (C[1] - my) * ny <= 0) continue;
+      ctx.fillStyle = css(scale(col, i % 2 ? 0.5 : 0.75));
+      ctx.globalAlpha = fade * strength;
+      ctx.beginPath();
+      ctx.moveTo(lo[i][0], lo[i][1]);
+      ctx.lineTo(lo[j][0], lo[j][1]);
+      ctx.lineTo(up[j][0], up[j][1]);
+      ctx.lineTo(up[i][0], up[i][1]);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.globalAlpha = fade * strength * 0.8;
+    ctx.fillStyle = css(scale(col, 1.05));
+    ctx.beginPath();
+    ctx.moveTo(up[0][0], up[0][1]);
+    for (let i = 1; i < 4; i++) ctx.lineTo(up[i][0], up[i][1]);
+    ctx.closePath();
+    ctx.fill();
+    // Contour : trait plein et lumineux qui se mue en pointillé.
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = `rgba(127,233,255,${(0.25 + 0.65 * (1 - e)) * strength})`;
+    ctx.lineWidth = 1.2 + 1.3 * (1 - e);
+    ctx.setLineDash(e < 0.35 ? [] : [5, 5]);
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) % 4;
+      ctx.moveTo(up[i][0], up[i][1]);
+      ctx.lineTo(up[j][0], up[j][1]);
+      ctx.moveTo(lo[i][0], lo[i][1]);
+      ctx.lineTo(up[i][0], up[i][1]);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Graduation de la couche retirée, sur l'arête la plus proche : éclat ambré.
+    let near = 0;
+    for (let i = 1; i < 4; i++) if (lo[i][2] < lo[near][2]) near = i;
+    const [cx, cy] = corners[near];
+    const a = cam.project(cx, cy, H + 1, p);
+    const b = cam.project(cx + (cx === 0 ? -1.2 : 1.2), cy + (cy === 0 ? -1.2 : 1.2), H + 1, p);
+    if (a && b) {
+      ctx.strokeStyle = `rgba(255,210,122,${(1 - e) * strength})`;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
       ctx.stroke();
     }
     ctx.restore();
@@ -819,7 +924,11 @@ export class MonolithView implements WorldView {
     const S = f.size;
     const H = cam.surfaceZ;
     const base = layerColor(f.layer, cam.cubeSize);
-    const below = layerColor(Math.min(f.layer + 1, cam.cubeSize - 1), cam.cubeSize);
+    // Fond des puits : la strate de la couche du dessous (même teinte que sur les faces du cube).
+    const strataBelow = this.strata(cam.cubeSize);
+    const layerBelow = Math.min(f.layer + 1, cam.cubeSize - 1);
+    const sidBelow = strataBelow.ids[layerBelow];
+    const below = scale(layerColor(strataBelow.first[sidBelow], cam.cubeSize), 0.92 + hash2(sidBelow, cam.cubeSize, 31) * 0.16);
     const vw = cam.visibleWorld();
     const r = visibleRange(S, vw.minX - 1, vw.minY - 1, vw.maxX + 1, vw.maxY + 1);
     if (r.x1 < r.x0 || r.y1 < r.y0) return;
@@ -861,6 +970,8 @@ export class MonolithView implements WorldView {
     const tiles = new Map<number, Batch>();
     const floors: Batch[] = Array.from({ length: FOG_BUCKETS }, () => new Batch());
     const walls = new Map<number, Batch>();
+    const wallLips = new Path2D();
+    const wallBeds = new Path2D();
     const hi = new Path2D();
     const lo = new Path2D();
     const chamferLit = new Batch();
@@ -974,10 +1085,36 @@ export class MonolithView implements WorldView {
           if (width >= 14 && hash2(x, y, 21) < 0.22) glyph(floorRunes, inset([la, lb, lc, ld], 0.1), Math.floor(hash2(x, y, 22) * GLYPHS.length));
           // Parois des blocs voisins visibles depuis la caméra.
           const C = p.c;
-          if (y > 0 && f.hp[idx - S] > 0 && C[1] > y) path(walls, fb * 4 + 0).poly([a, b, lb, la]);
-          if (x > 0 && f.hp[idx - 1] > 0 && C[0] > x) path(walls, fb * 4 + 1).poly([a, d, ld, la]);
-          if (x < S - 1 && f.hp[idx + 1] > 0 && C[0] < x + 1) path(walls, fb * 4 + 1).poly([b, c, lc, lb]);
-          if (y < S - 1 && f.hp[idx + S] > 0 && C[1] < y + 1) path(walls, fb * 4 + 2).poly([d, c, lc, ld]);
+          // Clé : brume, orientation (nord, côtés, sud), variante de pierre du bloc voisin.
+          // Le rebord supérieur de chaque paroi est souligné d'un liseré clair.
+          const wallVar = (bx: number, by: number) => Math.min(2, Math.floor(hash2(bx, by, 57) * 3));
+          const lip = width >= 14 && !this.lowFx;
+          // Lit de la strate : une ligne fine aux 55 % de la hauteur de la paroi.
+          const bed = (p0: Pt, p1: Pt, q0: Pt, q1: Pt) => {
+            if (width < 18 || this.lowFx) return;
+            wallBeds.moveTo(p0[0] + (q0[0] - p0[0]) * 0.55, p0[1] + (q0[1] - p0[1]) * 0.55);
+            wallBeds.lineTo(p1[0] + (q1[0] - p1[0]) * 0.55, p1[1] + (q1[1] - p1[1]) * 0.55);
+          };
+          if (y > 0 && f.hp[idx - S] > 0 && C[1] > y) {
+            path(walls, (fb * 4 + 0) * 3 + wallVar(x, y - 1)).poly([a, b, lb, la]);
+            if (lip) (wallLips.moveTo(a[0], a[1]), wallLips.lineTo(b[0], b[1]));
+            bed(a, b, la, lb);
+          }
+          if (x > 0 && f.hp[idx - 1] > 0 && C[0] > x) {
+            path(walls, (fb * 4 + 1) * 3 + wallVar(x - 1, y)).poly([a, d, ld, la]);
+            if (lip) (wallLips.moveTo(a[0], a[1]), wallLips.lineTo(d[0], d[1]));
+            bed(a, d, la, ld);
+          }
+          if (x < S - 1 && f.hp[idx + 1] > 0 && C[0] < x + 1) {
+            path(walls, (fb * 4 + 1) * 3 + wallVar(x + 1, y)).poly([b, c, lc, lb]);
+            if (lip) (wallLips.moveTo(b[0], b[1]), wallLips.lineTo(c[0], c[1]));
+            bed(b, c, lb, lc);
+          }
+          if (y < S - 1 && f.hp[idx + S] > 0 && C[1] < y + 1) {
+            path(walls, (fb * 4 + 2) * 3 + wallVar(x, y + 1)).poly([d, c, lc, ld]);
+            if (lip) (wallLips.moveTo(d[0], d[1]), wallLips.lineTo(c[0], c[1]));
+            bed(d, c, ld, lc);
+          }
         }
       }
       flush();
@@ -1003,12 +1140,25 @@ export class MonolithView implements WorldView {
     }
     // 2. Parois (nord éclairée, côtés plus sombres, sud dans l'ombre).
     // Parois des puits plus sombres que les dessus : le trou se distingue du bloc intact.
+    // Elles montrent la strate de la couche courante (même teinte que les faces du cube)
+    // et la pierre de chaque bloc (trois variantes), comme une coupe dans la roche.
     const wallShade = [0.46, 0.32, 0.24];
+    const WALL_VARIANT = [0.78, 1, 1.24];
+    const strataInfo = this.strata(cam.cubeSize);
+    const sidHere = strataInfo.ids[Math.min(cam.cubeSize - 1, f.layer)];
+    const wallBase = scale(layerColor(strataInfo.first[sidHere], cam.cubeSize), 0.92 + hash2(sidHere, cam.cubeSize, 31) * 0.16);
     for (const [k, batch] of walls) {
-      const fb = Math.floor(k / 4);
-      ctx.fillStyle = fogged(scale(base, wallShade[k % 4]), fb);
+      const v = k % 3;
+      const dir = Math.floor(k / 3) % 4;
+      const fb = Math.floor(k / 12);
+      ctx.fillStyle = fogged(scale(wallBase, wallShade[dir] * WALL_VARIANT[v]), fb);
       batch.fill(ctx);
     }
+    ctx.strokeStyle = 'rgba(150,172,235,0.16)';
+    ctx.lineWidth = 1;
+    ctx.stroke(wallBeds);
+    ctx.strokeStyle = 'rgba(200,220,255,0.32)';
+    ctx.stroke(wallLips);
     // 3. Dessus des blocs.
     // Quatre teintes de plaques : de l'ardoise sombre à une pierre plus froide et plus claire.
     const plates: RGB[] = [scale(base, 0.74), scale(base, 0.86), mix(scale(base, 0.96), [70, 92, 140], 0.25), mix(scale(base, 1.06), [96, 84, 150], 0.22)];
