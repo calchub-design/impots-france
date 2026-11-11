@@ -888,6 +888,26 @@ body[data-renderer='monolith'] .vignette {
   #cam-more {
     display: block;
   }
+  /* « ⋯ » ouvert : chaque commande affiche son nom à gauche (on découvre à quoi sert chaque icône). */
+  .cam-controls button {
+    position: relative;
+  }
+  .cam-controls.open button[data-label]::after {
+    content: attr(data-label);
+    position: absolute;
+    right: calc(100% + 6px);
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 3px 8px;
+    border-radius: 8px;
+    background: rgba(8, 10, 26, 0.88);
+    border: 1px solid rgba(127, 233, 255, 0.28);
+    color: var(--text);
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+    pointer-events: none;
+  }
   .cam-controls.open #cam-more {
     background: rgba(65, 224, 255, 0.22);
     border-color: rgba(65, 224, 255, 0.5);

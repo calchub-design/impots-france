@@ -202,3 +202,20 @@ export function plateNoise(x: number, y: number, h: (x: number, y: number, s: nu
   const bot = c + (d - c) * sm(kx);
   return top + (bot - top) * sm(ky);
 }
+
+/**
+ * Strates géologiques du monolithe : des groupes de 2 à 5 couches d'épaisseur variable,
+ * déterminés par l'arête du cube seulement (stables pendant toute la saison, identiques
+ * pour tous les joueurs). Renvoie, pour chaque couche (0 = sommet), l'indice de sa strate.
+ */
+export function strataLayout(size: number, h: (x: number, y: number, s: number) => number): Int16Array {
+  const out = new Int16Array(Math.max(0, size));
+  let layer = 0;
+  let id = 0;
+  while (layer < size) {
+    const thick = 2 + Math.floor(h(id, size, 77) * 4);
+    for (let k = 0; k < thick && layer < size; k++) out[layer++] = id;
+    id++;
+  }
+  return out;
+}

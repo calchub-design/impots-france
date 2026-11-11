@@ -45,3 +45,51 @@ Captures avant / après : `npm run build && NODE_PATH=$(npm root -g) npm run cap
 | Vue monumentale, ordinateur | ![](captures/finition/monument-bureau-cube12.png) |
 | Petit cube (photo d'origine : bandeau et mini-carte sur l'écran) | ![](captures/finition/petit-cube-iphone.png) |
 | Contraste en vue de minage | ![](captures/finition/minage-contraste-iphone.png) |
+
+---
+
+# Finition 2 (points 7 à 11)
+
+Toujours **sans nouvelle mécanique**, sans changement du serveur ni du protocole.
+
+| # | Problème | Correction |
+|---|---|---|
+| 7 | Les faces du monolithe faisaient 40 rayures identiques : une « boîte » plutôt qu'une roche. | Les couches sont regroupées en **strates géologiques** de 2 à 5 couches d'épaisseur variable. Chaque strate a sa propre teinte et une ligne éclairée la sépare de la suivante. Une couture cyan apparaît toutes les trois strates. **Quand les couches sont assez grandes** (au moins 7 px), on voit en plus des plaques de pierre de longueurs inégales. Quelques runes lumineuses éparses complètent le tout. Tout est déterminé par la taille du cube : le dessin est identique pour tous les joueurs et ne change pas pendant la saison. |
+| 8 | Vu de loin, un cube creusé à 28 % paraissait simplement plus petit. | **Volume déjà excavé** : la silhouette d'origine du cube s'affiche en pointillés au-dessus de la couche courante, avec un léger voile. Une graduation ambrée marque chaque couche retirée. Cet affichage n'existe qu'en vue monumentale et s'efface en vue de minage. L'écran holographique reste ancré au sommet d'origine : ses faisceaux s'allongent à mesure que le cube se creuse. Le cadrage ne bouge plus d'une couche à l'autre (vérifié par test). |
+| 9 | Pseudos de mineurs voisins empilés en colonne, avec des fils croisés. | Les mineurs proches à l'écran (moins de 26 × 22 px) partagent **une seule étiquette** « Nom +n ». Le nom affiché est celui du mineur prioritaire : un allié, sinon le plus récent ou le plus proche. Ce regroupement vaut pour les deux rendus. |
+| 10 | L'aide « Touchez un bloc pour le choisir, puis Miner (maintenir = continu) » restait affichée en permanence. | L'aide complète s'affiche tant que le joueur n'a pas fait 20 coups validés, puis devient « Maintenir = minage continu ». Ce passage est mémorisé sur l'appareil. |
+| 11 | On ne savait pas ce que cachait le bouton « ⋯ ». | Sur téléphone, quand « ⋯ » est ouvert, **chaque commande affiche son nom** : Zoomer, Dézoomer, Panneau, Ma brigade, Fermer, Tout le cube, Mon bloc. |
+
+## Performances (mesurées, pas estimées)
+
+Mesures faites en vue monumentale sur un iPhone 13 émulé, processeur ralenti 4 fois, sur 120 images en rotation et 3 essais. La version « avant » est celle du commit précédent.
+
+| Cube | Faces, avant | Faces, après | Image entière, avant | Image entière, après |
+|---|---|---|---|---|
+| 12 couches | 0,7 ms | 1,3 ms (plaques visibles) | 3,3 ms | 4,7 ms |
+| 40 couches | 1,9 ms | 2,1 ms | 9,2 ms | 9,2 ms |
+
+Sans optimisation, la première version des faces coûtait **7,1 ms**. Trois changements l'ont ramenée au niveau ci-dessus :
+- les plaques et les runes sont calculées une fois par cube ;
+- chaque ligne de couche ne demande que deux projections, les autres points en sont déduits par interpolation perspective exacte ;
+- les plaques ne sont dessinées que lorsqu'elles se voient.
+
+Le seuil de passage automatique en effets réduits reste à 14 ms. Le test de performance de `e2e-browser` donne 2,0 ms par image en moyenne, à 61 images/s.
+
+## Vérifications
+
+**Tests unitaires** : 242 au total, dont 3 nouveaux.
+- Strates de 2 à 5 couches, couvrant tout le cube, déterministes et variées.
+- Cadrage avec couches excavées : le volume d'origine et l'écran sont entiers à l'écran, avec un cadrage identique d'une couche à l'autre.
+- Regroupement des pseudos.
+
+**Tests navigateur** : nouvelles vérifications, toutes réussies sur les deux rendus.
+- Les 6 commandes nommées quand « ⋯ » est ouvert, entièrement dans la vue.
+- Aide courte après 20 coups, aide complète pour un débutant à 6 coups.
+- Toutes les suites : e2e 33/33 et 32/32, découvertes, missions 17/17, brigades, cérémonie, bêta.
+
+| | |
+|---|---|
+| Faces et volume excavé (iPhone) | ![](captures/finition/faces-et-volume-excave-iphone.png) |
+| Cube creusé (ordinateur) | ![](captures/finition/cube-creuse-bureau.png) |
+| Commandes nommées et pseudos groupés | ![](captures/finition/commandes-et-pseudos-iphone.png) |

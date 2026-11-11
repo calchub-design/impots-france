@@ -3,7 +3,7 @@ import { hash2, toXY, visibleRange, type FaceData } from '../face.js';
 import { attachGestures, type PointerKind } from '../gestures.js';
 import type { ImpactKind, SurfaceState, WorldLayer } from '../surface.js';
 import type { WorldView } from '../view.js';
-import { ACTIVE_RATE, GLYPHS, PALETTE, RUNE_RATE, VEIN_RATE, css, layerColor, mix, plateNoise, scale, type RGB } from './material.js';
+import { ACTIVE_RATE, GLYPHS, PALETTE, RUNE_RATE, VEIN_RATE, css, layerColor, mix, plateNoise, scale, strataLayout, type RGB } from './material.js';
 import { paintHologram, type HoloData } from './hologram.js';
 import { PerspectiveCamera, type Pose, type Vec3 } from './persp.js';
 import { drawCenteredMessage } from '../labels.js';
@@ -224,10 +224,12 @@ export class MonolithView implements WorldView {
     this.framingKey = key;
     // Le cadrage monumental inclut l'écran holographique (largeur et hauteur réelles),
     // centré dans la zone utile au-dessus des pastilles du bas.
+    // Le volume d'origine (couches déjà excavées comprises) sert de référence : le cadrage
+    // et la place de l'écran ne changent pas pendant la saison, le cube s'y creuse.
     const S = c.cubeSize;
     const W = S * BOARD.width;
-    const zb = c.surfaceZ + S * BOARD.lift;
-    c.frameMonument(0, { width: W, y: BOARD.y, zb, zt: zb + W * BOARD.aspect }, { fillW: 0.94, fillH: 0.88, bottomInset: HUD_BOTTOM });
+    const zb = S + S * BOARD.lift;
+    c.frameMonument(S - c.surfaceZ, { width: W, y: BOARD.y, zb, zt: zb + W * BOARD.aspect }, { fillW: 0.94, fillH: 0.88, bottomInset: HUD_BOTTOM });
     c.minZoom = c.monumentalZoom;
     if (c.zoom < c.minZoom) c.zoom = c.minZoom;
   }
@@ -416,6 +418,7 @@ export class MonolithView implements WorldView {
       this.drawSides(f, p, time);
       this.drawTop(f, p, time);
       this.drawEffects(f, p, time);
+      this.drawExcavated(p);
     }
     for (const l of this.layers) {
       if (l instanceof BillboardLayer) this.drawBillboard(l, p, time);
@@ -524,21 +527,146 @@ export class MonolithView implements WorldView {
     ctx.fillRect(c[0] - r, c[1] - r, r * 2, r * 2);
   }
 
-  /** Faces latérales visibles du cube : une bande par couche restante, coutures lumineuses. */
+  /**
+   * Volume déjà excavé : la silhouette d'origine du cube, en pointillés, au-dessus de la
+   * couche courante, avec une graduation par couche retirée. Visible en vue monumentale
+   * seulement (s'efface en vue de minage) : de loin, on voit tout de suite le chemin parcouru.
+   */
+  private drawExcavated(p: Pose) {
+    const cam = this.camera;
+    const S = cam.cubeSize;
+    const H = cam.surfaceZ;
+    const removed = S - H;
+    const k = Math.max(0, Math.min(1, (cam.t - 0.35) / 0.4));
+    if (removed < 1 || k <= 0) return;
+    const ctx = this.ctx;
+    const corners: [number, number][] = [[0, 0], [S, 0], [S, S], [0, S]];
+    const lo = corners.map(([x, y]) => cam.project(x, y, H, p));
+    const hi = corners.map(([x, y]) => cam.project(x, y, S, p));
+    if (lo.some((q) => !q) || hi.some((q) => !q)) return;
+    const L = lo as [number, number, number][];
+    const T = hi as [number, number, number][];
+    ctx.save();
+    // Voile très léger sur les faces du volume disparu.
+    ctx.fillStyle = `rgba(65,224,255,${0.035 * k})`;
+    ctx.beginPath();
+    ctx.moveTo(T[0][0], T[0][1]);
+    for (let i = 1; i < 4; i++) ctx.lineTo(T[i][0], T[i][1]);
+    ctx.closePath();
+    ctx.fill();
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) % 4;
+      ctx.beginPath();
+      ctx.moveTo(L[i][0], L[i][1]);
+      ctx.lineTo(L[j][0], L[j][1]);
+      ctx.lineTo(T[j][0], T[j][1]);
+      ctx.lineTo(T[i][0], T[i][1]);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Arêtes en pointillés.
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = `rgba(127,233,255,${0.5 * k})`;
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) % 4;
+      ctx.moveTo(T[i][0], T[i][1]);
+      ctx.lineTo(T[j][0], T[j][1]);
+      ctx.moveTo(L[i][0], L[i][1]);
+      ctx.lineTo(T[i][0], T[i][1]);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Graduations sur l'arête la plus proche de la caméra : une par couche retirée.
+    let near = 0;
+    let best = Infinity;
+    for (let i = 0; i < 4; i++) {
+      if (L[i][2] < best) {
+        best = L[i][2];
+        near = i;
+      }
+    }
+    const step = Math.hypot(T[near][0] - L[near][0], T[near][1] - L[near][1]) / removed;
+    if (step >= 3) {
+      const [cx, cy] = corners[near];
+      ctx.strokeStyle = `rgba(255,210,122,${0.75 * k})`;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      for (let z = H + 1; z <= S; z++) {
+        const a = cam.project(cx, cy, z, p);
+        const b = cam.project(cx + (cx === 0 ? -0.6 : 0.6), cy + (cy === 0 ? -0.6 : 0.6), z, p);
+        if (!a || !b) continue;
+        ctx.moveTo(a[0], a[1]);
+        ctx.lineTo(b[0], b[1]);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** Strates du cube courant (recalculées seulement si l'arête change). */
+  private strataCache: { size: number; ids: Int16Array; first: Int16Array; rows: Map<number, { runs: Int16Array; glints: Int16Array }> } | null = null;
+  private strata(S: number) {
+    if (this.strataCache?.size !== S) {
+      const ids = strataLayout(S, hash2);
+      const first = new Int16Array(ids.length ? ids[ids.length - 1] + 1 : 0).fill(-1);
+      for (let l = 0; l < ids.length; l++) if (first[ids[l]] < 0) first[ids[l]] = l;
+      this.strataCache = { size: S, ids, first, rows: new Map() };
+    }
+    return this.strataCache;
+  }
+
+  /**
+   * Plaques d'une couche sur une face (triplets début, fin, variante) et colonnes des runes :
+   * ne dépendent que du cube, calculées une fois puis réutilisées à chaque image.
+   */
+  private sideRow(S: number, salt: number, layer: number) {
+    const cache = this.strata(S).rows;
+    const key = layer * 4 + salt;
+    let row = cache.get(key);
+    if (!row) {
+      const runs: number[] = [];
+      let u0 = 0;
+      let v0 = -1;
+      for (let u = 0; u <= S; u++) {
+        // Bruit lent (plaques de plusieurs blocs) + léger aléa par bloc : segments peu nombreux.
+        const v = u < S ? Math.min(2, Math.floor((plateNoise(u + salt * 97, layer * 1.7, hash2) * 0.9 + hash2(u, layer, 13 + salt) * 0.1) * 3)) : -2;
+        if (v === v0) continue;
+        if (v0 >= 0) runs.push(u0, u, v0);
+        u0 = u;
+        v0 = v;
+      }
+      const glints: number[] = [];
+      for (let u = 0; u < S; u++) if (hash2(u + salt * 131, layer, 91) < 0.014) glints.push(u);
+      row = { runs: Int16Array.from(runs), glints: Int16Array.from(glints) };
+      cache.set(key, row);
+    }
+    return row;
+  }
+
+  /**
+   * Faces latérales visibles du cube. Les couches restantes sont regroupées en strates
+   * d'épaisseur variable (pas de rayures régulières) ; dans chaque couche, des plaques de
+   * pierre de longueurs inégales ; quelques runes lumineuses ; une ligne éclairée à chaque
+   * changement de strate et une couture cyan toutes les trois strates.
+   */
   private drawSides(f: FaceData, p: Pose, time: number) {
     const ctx = this.ctx;
     const S = this.camera.cubeSize;
     const H = this.camera.surfaceZ;
     const C = p.c;
-    type Face = { n: [number, number]; at: (u: number, z: number) => Vec3; shade: number; edgeHp: (u: number) => boolean };
+    const { ids, first } = this.strata(S);
+    type Face = { n: [number, number]; at: (u: number, z: number) => Vec3; shade: number; edgeHp: (u: number) => boolean; salt: number };
     const top = H - 1;
     const faces: Face[] = [
-      { n: [0, 1], at: (u, z) => [u, S, z], shade: 0.9, edgeHp: (u) => f.hp[(S - 1) * S + u] > 0 },
-      { n: [1, 0], at: (u, z) => [S, u, z], shade: 0.46, edgeHp: (u) => f.hp[u * S + (S - 1)] > 0 },
-      { n: [-1, 0], at: (u, z) => [0, u, z], shade: 0.52, edgeHp: (u) => f.hp[u * S] > 0 },
-      { n: [0, -1], at: (u, z) => [u, 0, z], shade: 0.4, edgeHp: (u) => f.hp[u] > 0 },
+      { n: [0, 1], at: (u, z) => [u, S, z], shade: 0.9, edgeHp: (u) => f.hp[(S - 1) * S + u] > 0, salt: 0 },
+      { n: [1, 0], at: (u, z) => [S, u, z], shade: 0.46, edgeHp: (u) => f.hp[u * S + (S - 1)] > 0, salt: 1 },
+      { n: [-1, 0], at: (u, z) => [0, u, z], shade: 0.52, edgeHp: (u) => f.hp[u * S] > 0, salt: 2 },
+      { n: [0, -1], at: (u, z) => [u, 0, z], shade: 0.4, edgeHp: (u) => f.hp[u] > 0, salt: 3 },
     ];
     const pulse = this.reducedMotion ? 0.7 : 0.55 + 0.25 * Math.sin(time / 1400);
+    const VARIANT = [0.84, 0.95, 1.07];
     for (const fc of faces) {
       // Face tournée vers la caméra ?
       const mid = fc.at(S / 2, H / 2);
@@ -553,38 +681,117 @@ export class MonolithView implements WorldView {
       }
       ctx.fillStyle = css(curCol);
       seg.fill(ctx);
-      // Couches inférieures, des plus proches de la surface vers le fond.
+      if (top <= 0) continue;
+      // Hauteur à l'écran d'une couche (au milieu de la face) : niveau de détail.
+      const ya = this.camera.project(...fc.at(S / 2, top / 2 + 1), p);
+      const yb = this.camera.project(...fc.at(S / 2, top / 2), p);
+      const bandPx = ya && yb ? Math.abs(yb[1] - ya[1]) : 0;
+      // Plaques seulement quand elles se voient (couches d'au moins 7 px, effets complets) ;
+      // au-delà, les strates d'épaisseur variable suffisent à casser l'effet de rayures.
+      const detailed = bandPx >= 7 && !this.lowFx;
+      // Extrémités projetées de chaque ligne de couche (z = 0..top) : tout point d'une ligne
+      // s'en déduit par interpolation perspective exacte (2 projections par ligne, pas 4 par plaque).
+      const ends: ([number, number, number] | null)[][] = [];
+      for (let z = 0; z <= top; z++) ends.push([this.camera.project(...fc.at(0, z), p), this.camera.project(...fc.at(S, z), p)]);
+      const onLine = (z: number, u: number): Pt | null => {
+        const [a, b] = ends[z];
+        if (!a || !b || a[2] <= 0 || b[2] <= 0) return null;
+        const t = u / S;
+        const wa = (1 - t) / a[2];
+        const wb = t / b[2];
+        const d = wa + wb;
+        return [(a[0] * wa + b[0] * wb) / d, (a[1] * wa + b[1] * wb) / d];
+      };
+      // Couches inférieures regroupées par strate et par teinte de plaque.
+      const batches = new Map<number, Batch>();
+      const glints = new Batch();
+      const layerLines = new Path2D();
+      const strataLines = new Path2D();
+      const seams = new Path2D();
       for (let k = top - 1; k >= 0; k--) {
         const layer = f.layer + (top - k);
-        const q = this.poly([fc.at(0, k + 1), fc.at(S, k + 1), fc.at(S, k), fc.at(0, k)], p);
-        if (!q) continue;
-        // Strates : alternance marquée et assombrissement avec la profondeur (le vide sous les pieds).
-        const band = scale(layerColor(layer, S), fc.shade * (k % 2 ? 1 : 0.82) * (0.45 + 0.55 * (k / Math.max(1, top))));
-        ctx.fillStyle = css(band);
-        ctx.beginPath();
-        addPoly(ctx, q);
-        ctx.fill();
-        // Arête supérieure de chaque strate, discrètement éclairée.
-        ctx.strokeStyle = 'rgba(160,190,255,0.12)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(q[0][0], q[0][1]);
-        ctx.lineTo(q[1][0], q[1][1]);
-        ctx.stroke();
-        // Couture lumineuse toutes les 8 couches (lignes de structure).
-        if ((S - 1 - layer) % 8 === 0) {
-          const a = this.camera.project(...fc.at(0, k + 1), p);
-          const b = this.camera.project(...fc.at(S, k + 1), p);
-          if (a && b) {
-            ctx.strokeStyle = `rgba(65,224,255,${0.28 * pulse})`;
-            ctx.lineWidth = 1.2;
-            ctx.beginPath();
-            ctx.moveTo(a[0], a[1]);
-            ctx.lineTo(b[0], b[1]);
-            ctx.stroke();
+        const sid = ids[Math.min(S - 1, layer)];
+        const z0 = k;
+        const z1 = k + 1;
+        if (!detailed) {
+          const e1 = ends[z1];
+          const e0 = ends[z0];
+          const q: Pt[] | null = e1[0] && e1[1] && e0[0] && e0[1] ? [[e1[0][0], e1[0][1]], [e1[1][0], e1[1][1]], [e0[1][0], e0[1][1]], [e0[0][0], e0[0][1]]] : null;
+          if (q) {
+            const key = sid * 4 + 1;
+            let bt = batches.get(key);
+            if (!bt) batches.set(key, (bt = new Batch()));
+            bt.poly(q);
+          }
+          if (bandPx >= 4 && !this.lowFx) {
+            for (const u of this.sideRow(S, fc.salt, layer).glints) {
+              const a = onLine(z1, u + 0.5);
+              const b = onLine(z0, u + 0.5);
+              if (a && b) glints.dot((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, Math.max(0.9, Math.min(2.2, bandPx * 0.16)));
+            }
+          }
+        } else {
+          // Plaques : variante de teinte par bloc (bruit à grande échelle), fusionnées en segments.
+          const row = this.sideRow(S, fc.salt, layer);
+          for (let i = 0; i < row.runs.length; i += 3) {
+            const u0 = row.runs[i];
+            const u1 = row.runs[i + 1];
+            const a = onLine(z1, u0);
+            const b = onLine(z1, u1);
+            const c = onLine(z0, u1);
+            const d = onLine(z0, u0);
+            if (!a || !b || !c || !d) continue;
+            const q: Pt[] = [a, b, c, d];
+            const key = sid * 4 + row.runs[i + 2];
+            let bt = batches.get(key);
+            if (!bt) batches.set(key, (bt = new Batch()));
+            bt.poly(q);
+          }
+          // Runes lumineuses éparses, fixées à la pierre (même place pour tous).
+          if (bandPx >= 4 && !this.lowFx) {
+            for (const u of row.glints) {
+              const a = onLine(z1, u + 0.5);
+              const b = onLine(z0, u + 0.5);
+              if (a && b) glints.dot((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, Math.max(0.9, Math.min(2.2, bandPx * 0.16)));
+            }
           }
         }
+        const [a, b] = ends[z1];
+        if (!a || !b) continue;
+        const startsStratum = first[sid] === layer;
+        const target = startsStratum ? strataLines : bandPx >= 7 ? layerLines : null;
+        if (target) {
+          target.moveTo(a[0], a[1]);
+          target.lineTo(b[0], b[1]);
+        }
+        if (startsStratum && sid % 3 === 0 && sid > 0) {
+          seams.moveTo(a[0], a[1]);
+          seams.lineTo(b[0], b[1]);
+        }
       }
+      for (const [key, bt] of batches) {
+        const sid = Math.floor(key / 4);
+        const v = key % 4;
+        const l0 = first[sid];
+        // Teinte de la strate (milieu), légère variation propre à la strate, assombrissement en profondeur.
+        const depthK = Math.max(0, Math.min(1, (top - (l0 - f.layer)) / Math.max(1, top)));
+        const own = 0.92 + hash2(sid, S, 31) * 0.16;
+        ctx.fillStyle = css(scale(layerColor(l0, S), fc.shade * own * VARIANT[v] * (0.45 + 0.55 * depthK)));
+        bt.fill(ctx);
+      }
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(160,190,255,0.06)';
+      ctx.stroke(layerLines);
+      ctx.strokeStyle = 'rgba(175,205,255,0.2)';
+      ctx.stroke(strataLines);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = `rgba(65,224,255,${0.3 * pulse})`;
+      ctx.lineWidth = 1.2;
+      ctx.stroke(seams);
+      ctx.fillStyle = `rgba(110,230,255,${0.55 * pulse})`;
+      glints.fill(ctx);
+      ctx.restore();
       // Arêtes verticales éclairées : la silhouette du monolithe.
       ctx.strokeStyle = 'rgba(127,233,255,0.45)';
       ctx.lineWidth = 1.5;
@@ -991,7 +1198,8 @@ export class MonolithView implements WorldView {
     const S = this.camera.cubeSize;
     const H = this.camera.surfaceZ;
     const W = S * BOARD.width;
-    const zb = H + S * BOARD.lift;
+    // Écran ancré au sommet d'origine du cube : il reste en place, ses faisceaux s'allongent.
+    const zb = S + S * BOARD.lift;
     const zt = zb + W * BOARD.aspect;
     const cx = S / 2;
     const cy = BOARD.y;

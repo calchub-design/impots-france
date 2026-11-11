@@ -200,6 +200,17 @@ try {
   await A.tap('#cam-more');
   const camMenu1 = await A.evaluate(() => !!document.querySelector('#zoom-in').offsetParent && !!document.querySelector('#board-btn').offsetParent);
   check('mobile : commandes secondaires regroupées derrière « ⋯ » puis dépliées', camMenu0.more && !camMenu0.zoomVisible && camMenu1, JSON.stringify({ ...camMenu0, ouvert: camMenu1 }));
+  // Menu ouvert : chaque commande affiche son nom, entièrement dans la vue.
+  const camLabels = await A.evaluate(() =>
+    [...document.querySelectorAll('#cam-controls button[data-label]')]
+      .filter((b) => b.offsetParent)
+      .map((b) => {
+        const cs = getComputedStyle(b, '::after');
+        const r = b.getBoundingClientRect();
+        return { text: cs.content.replace(/"/g, ''), left: r.left - 6 - parseFloat(cs.width || '0') };
+      }),
+  );
+  check('mobile : « ⋯ » ouvert, chaque commande est nommée (Zoomer, Panneau, Mon bloc…)', camLabels.length >= 6 && camLabels.every((l) => l.text && l.text !== 'none' && l.left >= 0), camLabels.map((l) => l.text).join(', '));
   await A.tap('#zoom-in');
   await A.waitForTimeout(350);
   check('le zoom conserve la sélection', (await sel(A)) === selBeforeZoom);

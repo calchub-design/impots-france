@@ -101,7 +101,8 @@ export class PerspectiveCamera implements ViewCamera {
     const k = smooth(t);
     const tx = lerp(x, this.cubeSize / 2, k);
     const ty = lerp(y, this.cubeSize / 2, k);
-    const tz = lerp(this.surfaceZ, this.surfaceZ * 0.45, k);
+    // Vue monumentale : visée fixe sur le volume d'origine (le cadrage ne bouge pas quand une couche tombe).
+    const tz = lerp(this.surfaceZ, this.cubeSize * 0.45, k);
     const focal = this.focal;
     const d = focal / zoom;
     const hx = Math.sin(yaw);

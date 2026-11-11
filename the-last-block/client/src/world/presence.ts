@@ -2,7 +2,7 @@ import { PRESENCE_WINDOW_MS, type PresenceEntry } from '../../../shared/protocol
 import type { ViewCamera as Camera } from './view.js';
 import { toXY } from './face.js';
 import type { WorldLayer } from './surface.js';
-import { placeLabels, type LabelRequest, type PlacedLabel } from './labels.js';
+import { clusterAnchors, placeLabels, type LabelRequest, type PlacedLabel } from './labels.js';
 
 /**
  * Marqueurs des autres mineurs : uniquement des observations réelles (dernier
@@ -80,7 +80,8 @@ export class PresenceLayer implements WorldLayer {
     const W = cam.viewW;
     const H = cam.viewH;
     const reqs: LabelRequest[] = [];
-    const labels: { text: string; color: string; alpha: number; ally: boolean; ax: number; ay: number }[] = [];
+    const labels: { text: string; name: string; count: number; color: string; alpha: number; ally: boolean; ax: number; ay: number }[] = [];
+    const pending: { ax: number; ay: number; priority: number }[] = [];
     for (const [block, all] of groups) {
       const { x, y } = toXY(block, this.faceSize);
       const [sx, sy] = cam.worldToScreen(x + 0.5, y + 0.5);
@@ -149,12 +150,18 @@ export class PresenceLayer implements WorldLayer {
       ctx.restore();
       // Étiquette : seulement quand le marqueur est assez proche pour être lu.
       if (s >= 14 || (ally && s >= 8)) {
-        const text = `${ally ? '⚑ ' : ''}${m.name}${list.length > 1 ? ` +${list.length - 1}` : ''}`;
-        ctx.font = LABEL_FONT;
-        const w = Math.ceil(ctx.measureText(text).width) + 14;
-        reqs.push({ id: labels.length, ax: sx, ay: top - d - 2, w, h: LABEL_H, priority: (ally ? 1000 : 0) + (fresh ? 100 : 0) + Math.min(99, s) });
-        labels.push({ text, color, alpha, ally, ax: sx, ay: top - d - 2 });
+        pending.push({ ax: sx, ay: top - d - 2, priority: (ally ? 1000 : 0) + (fresh ? 100 : 0) + Math.min(99, s) });
+        labels.push({ text: '', name: m.name, count: list.length, color, alpha, ally, ax: sx, ay: top - d - 2 });
       }
+    }
+    // Mineurs voisins à l'écran : une seule étiquette « Nom +n » pour le groupe.
+    ctx.font = LABEL_FONT;
+    for (const g of clusterAnchors(pending)) {
+      const lead = labels[g[0]];
+      const total = g.reduce((n, i) => n + labels[i].count, 0);
+      lead.text = `${lead.ally ? '⚑ ' : ''}${lead.name}${total > 1 ? ` +${total - 1}` : ''}`;
+      const w = Math.ceil(ctx.measureText(lead.text).width) + 14;
+      reqs.push({ id: g[0], ax: lead.ax, ay: lead.ay, w, h: LABEL_H, priority: pending[g[0]].priority });
     }
     const placed = placeLabels(reqs, W, H, [...this.reserved, ...this.dynamicReserved()]);
     ctx.save();

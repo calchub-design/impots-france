@@ -35,11 +35,11 @@ const freePort = () =>
     });
   });
 
-async function startServer(size) {
+async function startServer(size, hp = 3) {
   const port = await freePort();
   const proc = await new Promise((ok, ko) => {
     const p = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'dist/server/server/index.js'], {
-      env: { PATH: process.env.PATH, PORT: String(port), HOST: '127.0.0.1', DB_PATH: join(dir, `c${size}.sqlite`), CUBE_SIZE: String(size), BLOCK_BASE_HP: '3', BLOCK_HP_PER_LAYER: '0', DISCOVERY_PROFILE: 'none', SEASON_DURATION_HOURS: '48', MAX_ACTIONS_PER_SECOND: '50', NEW_ACCOUNTS_PER_IP_PER_HOUR: '1000' },
+      env: { PATH: process.env.PATH, PORT: String(port), HOST: '127.0.0.1', DB_PATH: join(dir, `c${size}-${hp}-${Date.now()}.sqlite`), CUBE_SIZE: String(size), BLOCK_BASE_HP: String(hp), BLOCK_HP_PER_LAYER: '0', DISCOVERY_PROFILE: 'none', SEASON_DURATION_HOURS: '48', MAX_ACTIONS_PER_SECOND: '50', NEW_ACCOUNTS_PER_IP_PER_HOUR: '1000' },
       stdio: ['ignore', 'pipe', 'inherit'],
     });
     p.stdout.on('data', (d) => d.toString().includes('serveur prêt') && ok(p));
@@ -72,15 +72,44 @@ function bot(port, name, hits, blocks) {
   });
 }
 
+/** Creuse `layers` couches entières (blocs à 1 PV) puis `partial` (0..1) de la suivante. */
+function digger(port, size, layers, partial) {
+  return new Promise((done, fail) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const plan = [];
+    for (let l = 0; l < layers; l++) for (let b = 0; b < size * size; b++) plan.push([l, b]);
+    // Couche entamée : une zone compacte au centre-ouest, comme un groupe qui creuse ensemble.
+    const want = Math.round(size * size * partial);
+    const order = [...Array(size * size).keys()].sort((a, b) => Math.hypot((a % size) - size * 0.35, Math.floor(a / size) - size / 2) - Math.hypot((b % size) - size * 0.35, Math.floor(b / size) - size / 2));
+    for (const b of order.slice(0, want)) plan.push([layers, b]);
+    let n = 0;
+    ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', v: 1, name: 'Foreuse' })));
+    ws.on('message', (raw) => {
+      const m = JSON.parse(raw.toString());
+      if (m.t !== 'welcome') return;
+      const tick = () => {
+        if (n >= plan.length) return setTimeout(() => (ws.close(), done()), 300);
+        const [layer, block] = plan[n];
+        ws.send(JSON.stringify({ t: 'mine', actionId: `foreuse-coup-${String(n).padStart(5, '0')}`, layer, block }));
+        n++;
+        setTimeout(tick, 30);
+      };
+      tick();
+    });
+    ws.on('error', fail);
+  });
+}
+
 const devices = [
   ['iphone', { ...playwright.devices['iPhone 13'] }],
   ['bureau', { viewport: { width: 1280, height: 860 }, deviceScaleFactor: 1 }],
 ];
 const browser = await playwright.chromium.launch();
 try {
-  for (const size of [4, 12, 40]) {
-    const { port, proc } = await startServer(size);
+  for (const [size, dug] of [[4, 0], [12, 0], [40, 0], [12, 3]]) {
+    const { port, proc } = await startServer(size, dug ? 1 : 3);
     await new Promise((r) => setTimeout(r, 800)); // saison démarrée automatiquement
+    if (dug) await digger(port, size, dug, 0.4);
     // Trous et blocs abîmés autour du centre de la face (là où la caméra arrive).
     const c = Math.floor(size / 2);
     const at = (dx, dy) => (c + dy) * size + c + dx;
@@ -93,8 +122,15 @@ try {
       await page.goto(`http://127.0.0.1:${port}/?rendu=${RENDU}&profil=cap-${dev}`);
       await page.waitForFunction(() => window.tlb?.state.cube && document.querySelector('#conn-status').dataset.state === 'online', null, { timeout: 15000 });
       await page.waitForTimeout(1200);
-      const tag = `${PREFIX}-${RENDU}-cube${size}-${dev}`;
+      const tag = `${PREFIX}-${RENDU}-cube${size}${dug ? `-creuse${dug}` : ''}-${dev}`;
       await page.screenshot({ path: join(OUT, `${tag}-minage.png`) });
+      if (dev === 'iphone') {
+        // Commandes secondaires ouvertes (« ⋯ ») : libellés visibles.
+        await page.evaluate(() => document.querySelector('#cam-more').click());
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: join(OUT, `${tag}-commandes.png`) });
+        await page.evaluate(() => document.querySelector('#cam-more').click());
+      }
       await page.evaluate(() => document.querySelector('#board-btn').click());
       await page.waitForTimeout(1300);
       await page.screenshot({ path: join(OUT, `${tag}-panneau.png`) });

@@ -104,6 +104,31 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLEl
 const params = new URLSearchParams(location.search);
 const profile = (params.get('profil') ?? params.get('profile') ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24) || 'default';
 
+/**
+ * Aide du bouton Miner : la phrase complète tant que le joueur débute (moins de 20 coups
+ * validés), puis un simple rappel. Mémorisé sur l'appareil (une seule fois suffit).
+ */
+const HINT_KEY = `tlb.aide-minage.${profile}`;
+let hintLearned = (() => {
+  try {
+    return localStorage.getItem(HINT_KEY) === '1';
+  } catch {
+    return false;
+  }
+})();
+function miningHintShort(): boolean {
+  if (!hintLearned && state.me.hits >= 20) {
+    hintLearned = true;
+    try {
+      localStorage.setItem(HINT_KEY, '1');
+    } catch {
+      /* stockage indisponible : l'aide redeviendra complète au prochain chargement */
+    }
+  }
+  return hintLearned;
+}
+
+
 // ---------------------------------------------------------------------------
 // Scène et réseau
 // ---------------------------------------------------------------------------
@@ -1301,7 +1326,9 @@ function renderHud() {
     ? 'Limite quotidienne atteinte'
     : !state.season
       ? 'En attente de la prochaine saison'
-      : 'Touchez un bloc pour le choisir, puis Miner (maintenir = continu)';
+      : miningHintShort()
+        ? 'Maintenir = minage continu'
+        : 'Touchez un bloc pour le choisir, puis Miner (maintenir = continu)';
   if (!$('#overview').hidden) overview.data = { ...overview.data, cube: state.cube, selected: state.selected };
   syncWorld();
 }

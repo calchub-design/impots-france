@@ -144,7 +144,7 @@ sudo cp -r the-last-block/. /opt/the-last-block/
 cd /opt/the-last-block
 sudo -u lastblock npm ci
 sudo -u lastblock npm run build
-sudo -u lastblock npm test            # 239 tests attendus, tous verts
+sudo -u lastblock npm test            # 242 tests attendus, tous verts
 
 # Configuration (voir § 4)
 sudo cp .env.beta.example /etc/the-last-block/beta.env
@@ -492,7 +492,7 @@ Tout doit être coché pour **GO**. Une seule case non cochée vaut **NO-GO**.
 
 **Technique**
 
-- [ ] `npm test` : 239 tests verts sur la version étiquetée.
+- [ ] `npm test` : 242 tests verts sur la version étiquetée.
 - [ ] Les e2e passent sur les deux rendus : `e2e`, `e2e:decouvertes`, `e2e:missions`, `e2e:brigades`, `e2e:ceremonie`, `e2e:beta`.
 - [ ] `journalctl` affiche « MODE BÊTA PRIVÉE », sans aucun avertissement de configuration.
 - [ ] `https://…/api/health` répond `ok`, et `https://…/api/admin/status` répond **404**.
@@ -519,7 +519,7 @@ Tout doit être coché pour **GO**. Une seule case non cochée vaut **NO-GO**.
 ## 18. Tests automatisés
 
 ```bash
-npm test                                         # 239 tests Vitest (19 fichiers)
+npm test                                         # 242 tests Vitest (19 fichiers)
 npm run typecheck && npm run build
 NODE_PATH=$(npm root -g) npm run e2e:beta -- --rendu monolithe    # 29 vérifications (aussi --rendu classique)
 ```

@@ -127,6 +127,8 @@ try {
   const pb = await progress(B);
   check('téléphone : « Premiers impacts » et « Explorateur » accomplies (20 coups, 10 blocs)', pa === 'first-impacts:20✓ explorer:10✓ collective:0', pa);
   check('ordinateur : progression personnelle indépendante (6 coups, 3 blocs)', pb === 'first-impacts:6 explorer:3 collective:0', pb);
+  const hints = await Promise.all([A, B].map((p) => p.evaluate(() => document.querySelector('#mine-hint').textContent)));
+  check('aide du bouton Miner : courte après 20 coups, complète pour un débutant (6 coups)', hints[0] === 'Maintenir = minage continu' && /^Touchez un bloc/.test(hints[1]), hints.join(' | '));
   const toasts = await A.evaluate(() => [...document.querySelectorAll('#toasts .toast')].map((t) => t.textContent).join(' | '));
   const badge2 = await A.evaluate(() => document.querySelector('#menu-missions').textContent);
   check('téléphone : notification de mission accomplie et pastille « 2/3 »', /Mission accomplie/.test(toasts) && badge2 === '2/3', `${badge2} · ${toasts.slice(0, 90)}`);

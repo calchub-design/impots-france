@@ -66,6 +66,32 @@ export function placeLabels(reqs: LabelRequest[], viewW: number, viewH: number, 
   return placed;
 }
 
+/**
+ * Regroupe les ancres d'étiquettes très proches à l'écran (mineurs voisins) : chaque groupe
+ * est mené par l'étiquette la plus prioritaire, les autres s'effacent derrière un « +n ».
+ * Évite les colonnes d'étiquettes empilées dont les fils se croisent.
+ * Renvoie les groupes (indices), le meneur en premier.
+ */
+export function clusterAnchors(items: { ax: number; ay: number; priority: number }[], rx = 26, ry = 22): number[][] {
+  const order = items.map((_, i) => i).sort((a, b) => items[b].priority - items[a].priority || a - b);
+  const owner = new Array<number>(items.length).fill(-1);
+  const groups: number[][] = [];
+  for (const i of order) {
+    if (owner[i] >= 0) continue;
+    const g = [i];
+    owner[i] = groups.length;
+    for (const j of order) {
+      if (owner[j] >= 0) continue;
+      if (Math.abs(items[j].ax - items[i].ax) <= rx && Math.abs(items[j].ay - items[i].ay) <= ry) {
+        owner[j] = groups.length;
+        g.push(j);
+      }
+    }
+    groups.push(g);
+  }
+  return groups;
+}
+
 export interface ScreenRect {
   x: number;
   y: number;

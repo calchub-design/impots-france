@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { countLabel, plural } from '../client/src/text.js';
-import { boardReadable, placeLabels, rectsOverlap } from '../client/src/world/labels.js';
+import { hash2 } from '../client/src/world/face.js';
+import { boardReadable, clusterAnchors, placeLabels, rectsOverlap } from '../client/src/world/labels.js';
+import { strataLayout } from '../client/src/world/monolith/material.js';
 import { PerspectiveCamera } from '../client/src/world/monolith/persp.js';
 
 describe('accords en nombre (interface)', () => {
@@ -90,5 +92,77 @@ describe('cadrage monumental avec l\'écran holographique', () => {
     const [sx, sy] = c.worldToScreen(6, 6);
     expect(sx).toBeCloseTo(188, 0);
     expect(sy).toBeCloseTo(300, 0);
+  });
+});
+
+describe('finition 2 : strates, volume excavé, pseudos groupés', () => {
+  it('strates de 2 à 5 couches, couvrant tout le cube, identiques à chaque calcul', () => {
+    for (const size of [1, 4, 12, 40, 64]) {
+      const ids = strataLayout(size, hash2);
+      expect(ids.length).toBe(size);
+      expect(ids[0]).toBe(0);
+      const thick = new Map<number, number>();
+      for (let l = 0; l < size; l++) {
+        if (l > 0) expect(ids[l] - ids[l - 1]).toBeGreaterThanOrEqual(0);
+        if (l > 0) expect(ids[l] - ids[l - 1]).toBeLessThanOrEqual(1);
+        thick.set(ids[l], (thick.get(ids[l]) ?? 0) + 1);
+      }
+      const all = [...thick.values()];
+      // Toutes les strates font 2 à 5 couches, sauf la dernière qui peut être tronquée.
+      all.slice(0, -1).forEach((t) => expect(t).toBeGreaterThanOrEqual(2));
+      all.forEach((t) => expect(t).toBeLessThanOrEqual(5));
+      expect([...strataLayout(size, hash2)]).toEqual([...ids]);
+      // Épaisseurs variées sur un grand cube (pas de rayures régulières).
+      if (size >= 40) expect(new Set(all.slice(0, -1)).size).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('cadrage avec couches excavées : volume d\'origine et écran entiers à l\'écran, cadrage inchangé', () => {
+    const make = (surfaceZ: number) => {
+      const size = 12;
+      const c = new PerspectiveCamera();
+      c.setViewport(376, 600);
+      c.cubeSize = size;
+      c.surfaceZ = surfaceZ;
+      c.setBounds({ minX: 0, maxX: size, minY: 0, maxY: size });
+      const BW = size * 1.5;
+      const zb = size * 1.1;
+      const board = { width: BW, y: -2, zb, zt: zb + BW * 0.56 };
+      c.frameMonument(size - surfaceZ, board, { fillW: 0.94, fillH: 0.88, bottomInset: 40 });
+      c.minZoom = c.monumentalZoom;
+      c.animateTo({ x: size / 2, y: size / 2, zoom: c.monumentalZoom }, 0);
+      return { c, board, size };
+    };
+    for (const z of [12, 9, 4]) {
+      const { c, board, size } = make(z);
+      const p = c.pose;
+      const pts: number[][] = [];
+      for (const x of [0, size]) for (const y of [0, size]) for (const zz of [0, size]) pts.push(c.project(x, y, zz, p)!);
+      for (const s of [-1, 1]) for (const zz of [board.zb, board.zt]) pts.push(c.project(size / 2 + (s * p.r[0] * board.width) / 2, board.y + (s * p.r[1] * board.width) / 2, zz, p)!);
+      for (const q of pts) {
+        expect(q[0]).toBeGreaterThanOrEqual(0);
+        expect(q[0]).toBeLessThanOrEqual(376);
+        expect(q[1]).toBeGreaterThanOrEqual(0);
+        expect(q[1]).toBeLessThanOrEqual(560);
+      }
+    }
+    // Le cadrage ne dépend pas de la profondeur atteinte : l'image ne « saute » pas d'une couche à l'autre.
+    expect(make(9).c.monumentalZoom).toBeCloseTo(make(12).c.monumentalZoom, 6);
+    expect(make(4).c.monumentOffsetY).toBeCloseTo(make(12).c.monumentOffsetY, 6);
+  });
+
+  it('pseudos voisins regroupés derrière le plus prioritaire ; éloignés séparés', () => {
+    const items = [
+      { ax: 100, ay: 100, priority: 10 },
+      { ax: 110, ay: 115, priority: 50 },
+      { ax: 104, ay: 100, priority: 5 },
+      { ax: 300, ay: 100, priority: 1 },
+    ];
+    const groups = clusterAnchors(items);
+    expect(groups).toHaveLength(2);
+    expect(groups[0][0]).toBe(1);
+    expect([...groups[0]].sort()).toEqual([0, 1, 2]);
+    expect(groups[1]).toEqual([3]);
+    expect(clusterAnchors([])).toEqual([]);
   });
 });
