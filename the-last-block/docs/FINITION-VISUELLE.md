@@ -124,3 +124,29 @@ La séquence est discrète en vue de minage et pleine en vue monumentale. Avec �
 |---|---|
 | Couche retirée : avant, début, milieu, après | ![](captures/finition/couche-retiree-sequence.png) |
 | Parois des puits, avant / après (agrandi) | ![](captures/finition/parois-des-puits.png) |
+
+---
+
+# Revue générale de l'interface (hors cube)
+
+Revue de tous les écrans à partir des captures des tests navigateur, dans les deux rendus : menus, missions, brigade, Saisons et Hall, archives, cérémonie, intersaison, hors ligne, sur des écrans de 360 px, 390 px, tablette, paysage et ordinateur. Cinq défauts ont été trouvés et corrigés, chacun avec une vérification automatique :
+
+| Défaut constaté | Correction | Vérification |
+|---|---|---|
+| Sur téléphone, menu ouvert, les notifications (par exemple « Mission accomplie ») passaient **sous le tiroir** et restaient à moitié cachées. | Menu ouvert, les notifications passent au-dessus du tiroir, juste sous la barre du haut, sur toute la largeur. | e2e missions : la notification est l'élément visible à son emplacement, menu ouvert. |
+| Intersaison : la mini-carte restait affichée **vide**, ce qui ressemblait à une erreur. | Elle s'efface quand il n'y a pas de cube. | e2e cérémonie : mini-carte masquée en intersaison, sur un écran de 360 px. |
+| En paysage, les pseudos de mineurs voisins **s'empilaient en colonne** et passaient sous une notification. | Le regroupement « Nom +n » tient compte de la taille réelle des étiquettes : il s'applique dès qu'elles se toucheraient. Les pseudos évitent aussi toutes les notifications affichées, dès leur apparition. | Test unitaire de regroupement. e2e général, sur les 5 tailles d'écran : aucun pseudo sous une notification. |
+| Hall : « du 11 novembre 2026 au 11 novembre 2026 » pour une saison d'une journée, ce qui sera le cas de la bêta de 48 h si elle se termine tôt. | « le 11 novembre 2026 » quand les deux dates tombent le même jour. | Test unitaire. |
+
+Écrans relus **sans défaut constaté** :
+- missions (téléphone et ordinateur), profil et apparences ;
+- onglet Brigade et objectifs ;
+- archives du Signal ;
+- cérémonie (champion, secrets) et Hall sur ordinateur ;
+- invitation, maintenance, serveur indisponible ;
+- tablette.
+
+| | |
+|---|---|
+| Notifications avec le menu ouvert ; intersaison | ![](captures/finition/notifications-et-intersaison.png) |
+| Paysage : pseudos voisins regroupés, hors de la notification | ![](captures/finition/paysage-pseudos.png) |

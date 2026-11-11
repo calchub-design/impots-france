@@ -151,6 +151,22 @@ try {
     panelA.items.join('|') === 'Accomplie|Accomplie|0 / 1' && /00 h UTC/.test(panelA.reset) && /Initié du Signal/.test(panelA.rank),
     `${panelA.items.join(' | ')} · ${panelA.reset}`,
   );
+  // Une notification pendant que le menu est ouvert : visible au-dessus du tiroir, jamais dessous.
+  await A.evaluate(() => window.tlb.socket.send({ t: 'setName', name: 'Alice' }));
+  await A.waitForSelector('#toasts .toast', { timeout: 3000 });
+  const toastOnTop = await A.evaluate(() => {
+    const t = [...document.querySelectorAll('#toasts .toast')].pop();
+    const r = t.getBoundingClientRect();
+    // Les notifications ignorent le toucher (pointer-events: none) : réactivées le temps du test.
+    const box = document.querySelector('#toasts');
+    box.style.pointerEvents = 'auto';
+    t.style.pointerEvents = 'auto';
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    box.style.pointerEvents = '';
+    t.style.pointerEvents = '';
+    return { visible: !!hit && (hit === t || t.contains(hit)), top: Math.round(r.top) };
+  });
+  check('téléphone, menu ouvert : la notification reste visible au-dessus du tiroir', toastOnTop.visible, JSON.stringify(toastOnTop));
   await A.screenshot({ path: join(OUT, `missions-mobile-${RENDU}.png`) });
   await A.tap('#panel-close');
   await B.click('#missions-tab');

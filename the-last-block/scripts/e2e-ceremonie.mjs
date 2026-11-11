@@ -436,6 +436,8 @@ try {
   });
   check('intersaison : compte à rebours lisible en entier sur téléphone (360 px)', line360.fits, line360.text);
   await P360.screenshot({ path: join(OUT, `intersaison-360-${RENDU}.png`) });
+  const mapGone = await P360.evaluate(() => getComputedStyle(document.querySelector('.map-box')).opacity === '0');
+  check('intersaison : la mini-carte vide est masquée', mapGone);
   check('Hall : deux saisons, la première inchangée', hall2.seasons.length === 2 && JSON.stringify(hall2.seasons[1]) === JSON.stringify(JSON.parse(hallBefore).seasons[0]));
   check('aucune erreur JavaScript', errors.length === 0, errors.slice(0, 3).join(' | '));
 } catch (e) {

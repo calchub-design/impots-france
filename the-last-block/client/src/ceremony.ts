@@ -195,7 +195,9 @@ export class CeremonyPlayer {
 
 /** Dates d'une saison pour le Hall des champions. */
 export function seasonDates(a: SeasonArchive): string {
-  return `du ${DATE.format(a.startsAt)} au ${DATE.format(a.endedAt)}`;
+  const from = DATE.format(a.startsAt);
+  const to = DATE.format(a.endedAt);
+  return from === to ? `le ${from}` : `du ${from} au ${to}`;
 }
 
 export { CEREMONY_MS };

@@ -407,6 +407,14 @@ try {
     const toastShown = await p.locator('#toasts .toast').count();
     const bad = await overlaps(p);
     if (!toastShown) bad.push('notification absente pendant le contrôle');
+    // Les pseudos des mineurs (dessinés dans la scène) ne passent jamais sous une notification.
+    await p.waitForTimeout(250);
+    const labelOverToast = await p.evaluate(() => {
+      const v = document.querySelector('#viewport').getBoundingClientRect();
+      const toasts = [...document.querySelectorAll('#toasts .toast')].map((t) => t.getBoundingClientRect());
+      return window.tlb.presence.lastPlaced.filter((l) => l.id >= 0 && toasts.some((r) => l.x + v.left < r.right && r.left < l.x + v.left + l.w && l.y + v.top < r.bottom && r.top < l.y + v.top + l.h)).length;
+    });
+    if (labelOverToast) bad.push(`${labelOverToast} pseudo(s) sous une notification`);
     check(`mise en page ${name} : aucun chevauchement`, bad.length === 0, bad.join(', '));
     await p.screenshot({ path: join(OUT, `apres-${name}.png`) });
     await ctx.close();

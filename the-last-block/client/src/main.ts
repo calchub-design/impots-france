@@ -542,6 +542,8 @@ function updateBannerVisibility() {
   const m = mapBox.getBoundingClientRect();
   const covered = !!monolith && !!holo && monolith.billboardAlpha > 0.3 && rectsOverlap(holo, { x: m.left - v.left, y: m.top - v.top, w: m.width, h: m.height }, 4);
   mapBox.classList.toggle('yield', covered);
+  // Intersaison : pas de face à montrer, la mini-carte vide s'efface.
+  mapBox.classList.toggle('empty', !state.season || !state.cube);
   reservePresenceZones();
   if (banner.hidden === !visible) return;
   banner.hidden = !visible;
@@ -550,9 +552,10 @@ function updateBannerVisibility() {
 /** Les pseudos des mineurs évitent les éléments d'interface posés sur la surface. */
 function reservePresenceZones() {
   const v = $('#viewport').getBoundingClientRect();
-  presence.reserved = ['#banner', '.map-box', '.cam-controls', '.chips']
-    .map((sel) => document.querySelector<HTMLElement>(sel))
-    .filter((e): e is HTMLElement => !!e && !e.hidden && e.offsetParent !== null && getComputedStyle(e).opacity !== '0')
+  // Les notifications comptent dès leur apparition (elles entrent en fondu depuis l'opacité 0).
+  const toasts = [...document.querySelectorAll<HTMLElement>('#toasts .toast')];
+  presence.reserved = [...['#banner', '.map-box', '.cam-controls', '.chips'].map((sel) => document.querySelector<HTMLElement>(sel)), ...toasts]
+    .filter((e): e is HTMLElement => !!e && !e.hidden && e.offsetParent !== null && (toasts.includes(e) || getComputedStyle(e).opacity !== '0'))
     .map((e, i) => {
       const r = e.getBoundingClientRect();
       return { id: -1 - i, x: r.left - v.left, y: r.top - v.top, w: r.width, h: r.height };
@@ -1192,12 +1195,14 @@ function panelOpen() {
 function openPanel(tab?: string) {
   panel.classList.add('open');
   $('#backdrop').hidden = false;
+  placeToasts();
   $('#menu-btn').setAttribute('aria-expanded', 'true');
   if (tab) document.querySelector<HTMLButtonElement>(`.tabs button[data-tab="${tab}"]`)?.click();
 }
 function closePanel() {
   panel.classList.remove('open');
   $('#backdrop').hidden = true;
+  placeToasts();
   $('#menu-btn').setAttribute('aria-expanded', 'false');
 }
 $('#menu-btn').addEventListener('click', () => (panelOpen() ? closePanel() : openPanel()));
@@ -1206,11 +1211,22 @@ $('#backdrop').addEventListener('click', closePanel);
 
 // Notifications : en haut de la surface, à gauche de la mini-carte (aucun chevauchement de commande).
 function placeToasts() {
+  const root = document.documentElement.style;
+  // Téléphone, menu ouvert : le tiroir couvre la scène ; les notifications passent au-dessus,
+  // juste sous la barre du haut, sur toute la largeur.
+  const drawer = panelOpen() && getComputedStyle(panel).position === 'fixed';
+  document.body.classList.toggle('drawer-open', drawer);
+  if (drawer) {
+    const header = document.querySelector('header')?.getBoundingClientRect();
+    root.setProperty('--toast-top', `${Math.round((header?.bottom ?? 56) + 6)}px`);
+    root.setProperty('--toast-left', '8px');
+    root.setProperty('--toast-width', `${Math.round(Math.min(420, window.innerWidth - 16))}px`);
+    return;
+  }
   const v = $('#viewport').getBoundingClientRect();
   const map = $('.map-box').getBoundingClientRect();
   const banner = document.querySelector<HTMLElement>('#banner');
   const top = banner && !banner.hidden ? banner.getBoundingClientRect().bottom + 6 : v.top + 8;
-  const root = document.documentElement.style;
   root.setProperty('--toast-top', `${Math.round(top)}px`);
   root.setProperty('--toast-left', `${Math.round(v.left + 8)}px`);
   root.setProperty('--toast-width', `${Math.round(Math.min(420, map.left - v.left - 16))}px`);
@@ -1593,7 +1609,11 @@ function toast(text: string, kind: 'good' | 'bad' | 'info' = 'info') {
   const t = el('div', { cls: `toast ${kind}`, textContent: text });
   box.append(t);
   while (box.children.length > 3) box.firstElementChild?.remove();
-  setTimeout(() => t.remove(), 3200);
+  reservePresenceZones(); // les pseudos des mineurs évitent la notification
+  setTimeout(() => {
+    t.remove();
+    reservePresenceZones();
+  }, 3200);
 }
 
 setInterval(() => {
@@ -1677,6 +1697,7 @@ apiFetch('/api/config')
 // Exposé pour le débogage manuel dans la console.
 (window as unknown as { tlb: unknown }).tlb = {
   state,
+  presence,
   socket,
   minimap,
   get world() {

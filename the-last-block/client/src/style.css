@@ -2123,3 +2123,14 @@ body[data-renderer='monolith'] .vignette {
   opacity: 0;
   pointer-events: none;
 }
+
+/* Intersaison : mini-carte vide masquée. */
+.map-box.empty {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Téléphone, menu ouvert : les notifications restent visibles au-dessus du tiroir. */
+body.drawer-open .toasts {
+  z-index: 27;
+}

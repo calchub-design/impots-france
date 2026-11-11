@@ -72,7 +72,18 @@ export function placeLabels(reqs: LabelRequest[], viewW: number, viewH: number, 
  * Évite les colonnes d'étiquettes empilées dont les fils se croisent.
  * Renvoie les groupes (indices), le meneur en premier.
  */
-export function clusterAnchors(items: { ax: number; ay: number; priority: number }[], rx = 26, ry = 22): number[][] {
+export function clusterAnchors(items: { ax: number; ay: number; priority: number; w?: number }[], rx = 26, ry = 22, labelH = 0): number[][] {
+  // Avec la largeur des étiquettes : on regroupe aussi celles qui se toucheraient à leur
+  // place naturelle (même rangée horizontale, moins de deux hauteurs d'écart), au lieu de
+  // les laisser s'empiler en colonne.
+  const near = (i: number, j: number) => {
+    const dx = Math.abs(items[j].ax - items[i].ax);
+    const dy = Math.abs(items[j].ay - items[i].ay);
+    if (dx <= rx && dy <= ry) return true;
+    const wi = items[i].w;
+    const wj = items[j].w;
+    return labelH > 0 && wi !== undefined && wj !== undefined && dx < (wi + wj) / 2 + 4 && dy < labelH * 2;
+  };
   const order = items.map((_, i) => i).sort((a, b) => items[b].priority - items[a].priority || a - b);
   const owner = new Array<number>(items.length).fill(-1);
   const groups: number[][] = [];
@@ -82,7 +93,7 @@ export function clusterAnchors(items: { ax: number; ay: number; priority: number
     owner[i] = groups.length;
     for (const j of order) {
       if (owner[j] >= 0) continue;
-      if (Math.abs(items[j].ax - items[i].ax) <= rx && Math.abs(items[j].ay - items[i].ay) <= ry) {
+      if (near(i, j)) {
         owner[j] = groups.length;
         g.push(j);
       }

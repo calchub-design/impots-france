@@ -57,6 +57,8 @@ export class PresenceLayer implements WorldLayer {
   reserved: PlacedLabel[] = [];
   /** Zones mobiles recalculées à chaque image (écran holographique du monolithe). */
   dynamicReserved: () => PlacedLabel[] = () => [];
+  /** Étiquettes posées lors de la dernière image (coordonnées de la vue) : contrôles automatisés. */
+  lastPlaced: PlacedLabel[] = [];
 
   /** Animation continue seulement pendant le balancement des pioches (observations < 2,5 s). */
   animating() {
@@ -81,7 +83,7 @@ export class PresenceLayer implements WorldLayer {
     const H = cam.viewH;
     const reqs: LabelRequest[] = [];
     const labels: { text: string; name: string; count: number; color: string; alpha: number; ally: boolean; ax: number; ay: number }[] = [];
-    const pending: { ax: number; ay: number; priority: number }[] = [];
+    const pending: { ax: number; ay: number; priority: number; w: number }[] = [];
     for (const [block, all] of groups) {
       const { x, y } = toXY(block, this.faceSize);
       const [sx, sy] = cam.worldToScreen(x + 0.5, y + 0.5);
@@ -150,13 +152,15 @@ export class PresenceLayer implements WorldLayer {
       ctx.restore();
       // Étiquette : seulement quand le marqueur est assez proche pour être lu.
       if (s >= 14 || (ally && s >= 8)) {
-        pending.push({ ax: sx, ay: top - d - 2, priority: (ally ? 1000 : 0) + (fresh ? 100 : 0) + Math.min(99, s) });
+        ctx.font = LABEL_FONT;
+        const w0 = Math.ceil(ctx.measureText(`${ally ? '⚑ ' : ''}${m.name}`).width) + 14;
+        pending.push({ ax: sx, ay: top - d - 2, priority: (ally ? 1000 : 0) + (fresh ? 100 : 0) + Math.min(99, s), w: w0 });
         labels.push({ text: '', name: m.name, count: list.length, color, alpha, ally, ax: sx, ay: top - d - 2 });
       }
     }
     // Mineurs voisins à l'écran : une seule étiquette « Nom +n » pour le groupe.
     ctx.font = LABEL_FONT;
-    for (const g of clusterAnchors(pending)) {
+    for (const g of clusterAnchors(pending, 26, 22, LABEL_H)) {
       const lead = labels[g[0]];
       const total = g.reduce((n, i) => n + labels[i].count, 0);
       lead.text = `${lead.ally ? '⚑ ' : ''}${lead.name}${total > 1 ? ` +${total - 1}` : ''}`;
@@ -164,6 +168,7 @@ export class PresenceLayer implements WorldLayer {
       reqs.push({ id: g[0], ax: lead.ax, ay: lead.ay, w, h: LABEL_H, priority: pending[g[0]].priority });
     }
     const placed = placeLabels(reqs, W, H, [...this.reserved, ...this.dynamicReserved()]);
+    this.lastPlaced = placed;
     ctx.save();
     ctx.font = LABEL_FONT;
     ctx.textBaseline = 'middle';

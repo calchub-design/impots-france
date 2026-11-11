@@ -166,3 +166,26 @@ describe('finition 2 : strates, volume excavé, pseudos groupés', () => {
     expect(clusterAnchors([])).toEqual([]);
   });
 });
+
+describe('revue générale : petites corrections', () => {
+  it('pseudos dont les étiquettes se toucheraient : regroupés, même à plus de 26 px', async () => {
+    const items = [
+      { ax: 100, ay: 100, priority: 3, w: 110 },
+      { ax: 160, ay: 112, priority: 9, w: 110 }, // à 60 px : les étiquettes de 110 px se chevaucheraient
+      { ax: 400, ay: 100, priority: 1, w: 110 }, // loin : seule
+      { ax: 100, ay: 160, priority: 2, w: 110 }, // trois hauteurs plus bas : seule
+    ];
+    const groups = clusterAnchors(items, 26, 22, 17);
+    expect(groups[0]).toEqual([1, 0]);
+    expect(groups).toHaveLength(3);
+    // Sans largeur connue : ancien comportement (proximité stricte).
+    expect(clusterAnchors(items.map(({ w: _w, ...r }) => r))).toHaveLength(4);
+  });
+
+  it('Hall : une saison tenue sur une seule journée affiche « le … » et non « du … au … »', async () => {
+    const { seasonDates } = await import('../client/src/ceremony.js');
+    const day = Date.UTC(2026, 10, 11, 9);
+    expect(seasonDates({ startsAt: day, endedAt: day + 3 * 3600_000 } as never)).toBe('le 11 novembre 2026');
+    expect(seasonDates({ startsAt: day, endedAt: day + 2 * 86_400_000 } as never)).toBe('du 11 novembre 2026 au 13 novembre 2026');
+  });
+});
