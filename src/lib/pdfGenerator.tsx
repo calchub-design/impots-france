@@ -150,7 +150,8 @@ export async function generateTaxPDF(state: TaxState): Promise<void> {
           ...(calc.decote > 0 ? [{ label: '- Décote', value: -calc.decote, bold: false }] : []),
           ...(calc.reductionsTotal > 0 ? [{ label: '- Réductions d\'impôt', value: -calc.reductionsTotal, bold: false }] : []),
           ...(calc.creditsTotal > 0 ? [{ label: '- Crédits d\'impôt', value: -calc.creditsTotal, bold: false }] : []),
-          ...(calc.prelevementsSociaux > 0 ? [{ label: '+ Prélèvements sociaux (17,2%)', value: calc.prelevementsSociaux, bold: false }] : []),
+          ...(calc.impotForfaitaire > 0 ? [{ label: '+ Prélèvement forfaitaire (PFU 12,8 %)', value: calc.impotForfaitaire, bold: false }] : []),
+          ...(calc.prelevementsSociaux > 0 ? [{ label: '+ Prélèvements sociaux', value: calc.prelevementsSociaux, bold: false }] : []),
         ].map((l, i) => l.value !== null ? (
           <View key={i} style={l.bold ? styles.calcRowBold : styles.calcRow}>
             <Text style={styles.calcLabel}>{l.label}</Text>
@@ -164,9 +165,15 @@ export async function generateTaxPDF(state: TaxState): Promise<void> {
         ))}
 
         <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>IMPÔT NET ESTIMÉ</Text>
-          <Text style={styles.totalValue}>{fmt(Math.max(0, calc.impotNet))}</Text>
+          <Text style={styles.totalLabel}>{calc.impotNet < 0 ? 'RESTITUTION ESTIMÉE' : 'IMPÔT NET ESTIMÉ'}</Text>
+          <Text style={styles.totalValue}>{fmt(Math.abs(calc.impotNet))}</Text>
         </View>
+        {calc.ifi > 0 && (
+          <View style={styles.calcRow}>
+            <Text style={styles.calcLabel}>IFI estimé (calculé à part, formulaire 2042-IFI)</Text>
+            <Text style={styles.calcValue}>{fmt(calc.ifi)}</Text>
+          </View>
+        )}
 
         <View style={{ backgroundColor: '#fef2f2', padding: 8, marginTop: 4, marginBottom: 16 }}>
           <Text style={{ fontSize: 8, color: '#991b1b' }}>

@@ -23,6 +23,7 @@ export function SidePanel({ state }: Props) {
     { label: 'Décote', value: -calc.decote, bold: false },
     { label: 'Réductions d\'impôt', value: -calc.reductionsTotal, bold: false },
     { label: 'Crédits d\'impôt', value: -calc.creditsTotal, bold: false },
+    { label: 'Prélèvement forfaitaire (PFU)', value: calc.impotForfaitaire, bold: false },
     { label: 'Prélèvements sociaux', value: calc.prelevementsSociaux, bold: false },
   ];
 
@@ -44,9 +45,15 @@ export function SidePanel({ state }: Props) {
       </div>
       <div className="mt-4 pt-4 border-t-2 border-blue-200">
         <div className="flex justify-between font-bold text-blue-900 text-base">
-          <span>IMPÔT NET ESTIMÉ</span>
-          <span className="text-xl">{fmt(Math.max(0, calc.impotNet))}</span>
+          <span>{calc.impotNet < 0 ? 'RESTITUTION ESTIMÉE' : 'IMPÔT NET ESTIMÉ'}</span>
+          <span className={`text-xl ${calc.impotNet < 0 ? 'text-green-700' : ''}`}>{fmt(Math.abs(calc.impotNet))}</span>
         </div>
+        {calc.ifi > 0 && (
+          <div className="flex justify-between text-sm text-gray-600 mt-2">
+            <span>IFI estimé</span>
+            <span>{fmt(calc.ifi)}</span>
+          </div>
+        )}
       </div>
       <p className="text-xs text-gray-400 mt-3 leading-relaxed">
         Estimation indicative — l'administration fiscale peut avoir des informations complémentaires.

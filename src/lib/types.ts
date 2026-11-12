@@ -129,6 +129,7 @@ export interface RevenusFonciers {
     assuranceGLI: number;
     taxeFonciere: number;
     teomRecuperee: boolean;
+    teomMontant: number;
     fraisGestionAgence: number;
     fraisGestionDirect: number;
     fraisGestionDirectNbLocaux: number;
@@ -262,8 +263,10 @@ export interface TaxCalculation {
   decote: number;
   reductionsTotal: number;
   creditsTotal: number;
+  impotForfaitaire: number;
   prelevementsSociaux: number;
   impotNet: number;
+  ifi: number;
   foncierCalc: FoncierCalc;
 }
 

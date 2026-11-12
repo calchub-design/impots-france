@@ -1,5 +1,5 @@
 import { TaxState } from './types';
-import { initialState } from './taxState';
+import { initialState, hydraterEtat } from './taxState';
 
 export type TaxAction =
   | { type: 'SET_STEP'; payload: number }
@@ -16,7 +16,7 @@ export type TaxAction =
   | { type: 'UPDATE_REDUCTIONS'; payload: Partial<TaxState['reductionsCreditImpot']> }
   | { type: 'UPDATE_IFI'; payload: Partial<TaxState['ifi']> }
   | { type: 'RESET' }
-  | { type: 'LOAD'; payload: TaxState };
+  | { type: 'LOAD'; payload: unknown };
 
 export function taxReducer(state: TaxState, action: TaxAction): TaxState {
   switch (action.type) {
@@ -63,7 +63,7 @@ export function taxReducer(state: TaxState, action: TaxAction): TaxState {
       return initialState;
 
     case 'LOAD':
-      return action.payload;
+      return hydraterEtat(action.payload);
 
     default:
       return state;

@@ -51,6 +51,8 @@ const STEPS: WizardStep[] = [
 function isStepActive(step: WizardStep, modules: TaxState['modules']): boolean {
   if (step.alwaysVisible) return true;
   if (!step.moduleKey) return true;
+  // Les plus-values se saisissent dans le module Patrimoine financier
+  if (step.moduleKey === 'patrimoinefinancier' && modules.plusValues) return true;
   return modules[step.moduleKey];
 }
 
@@ -74,8 +76,10 @@ export function WizardLayout() {
     }
   }, []);
 
-  // Sauvegarde automatique
+  // Sauvegarde automatique — l'état initial n'est jamais écrit, pour ne pas
+  // écraser la sauvegarde existante avant qu'elle soit chargée
   useEffect(() => {
+    if (state === initialState) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       setSaved(true);

@@ -1,4 +1,5 @@
 import { TaxState, TaxCalculation, FoncierCalc, CaseFiscale } from './types';
+import { initialState } from './taxState';
 
 // ── Paramètres fiscaux par année de déclaration ─────────────
 interface ParamsFiscaux {
@@ -16,6 +17,12 @@ interface ParamsFiscaux {
   // PER
   plafondPER: number;
   minPER: number;
+  // Déficit foncier imputable sur le revenu global
+  plafondDeficitFoncier: number;
+  // Prélèvements sociaux et prélèvement forfaitaire
+  tauxPS: number;            // revenus fonciers, intérêts et dividendes perçus en 2025
+  tauxPSMajore: number;      // plus-values mobilières, LMNP (CSG à 10,6 % — LFSS 2026)
+  tauxPFU: number;           // part impôt sur le revenu du PFU
   // Années de revenus / libellé
   anneeRevenus: number;
   libelleDeclaration: string;
@@ -38,6 +45,10 @@ const PARAMS: ParamsFiscaux = {
   plafondAbattRetraite: 4439,
   plafondPER: 37680,
   minPER: 4710,
+  plafondDeficitFoncier: 10700,
+  tauxPS: 0.172,
+  tauxPSMajore: 0.186,
+  tauxPFU: 0.128,
   anneeRevenus: 2025,
   libelleDeclaration: 'Déclaration 2026 — Revenus 2025',
 };
@@ -62,6 +73,25 @@ export function calculerFraisKm(km: number, typeVehicule: string, cylindree: str
   return km * t.plus20k;
 }
 
+// ── État effectif : les modules décochés ne comptent pas ─────
+// Un module décoché dans le profil masque ses écrans ; ses données
+// éventuellement saisies auparavant ne doivent donc plus entrer dans le calcul.
+export function etatEffectif(state: TaxState): TaxState {
+  const m = state.modules;
+  return {
+    ...state,
+    revenusSalariaux: m.salaires ? state.revenusSalariaux : initialState.revenusSalariaux,
+    revenusRemplacement: m.retraite ? state.revenusRemplacement : initialState.revenusRemplacement,
+    revenusIndependant: m.independant ? state.revenusIndependant : initialState.revenusIndependant,
+    revenusFonciers: m.locationNue ? state.revenusFonciers : initialState.revenusFonciers,
+    revenusLMNP: m.locationMeublee ? state.revenusLMNP : initialState.revenusLMNP,
+    revenusSCI: m.sci ? state.revenusSCI : initialState.revenusSCI,
+    revenusPatrimoine: m.patrimoinefinancier || m.plusValues ? state.revenusPatrimoine : initialState.revenusPatrimoine,
+    chargesDeductibles: m.chargesDeductibles ? state.chargesDeductibles : initialState.chargesDeductibles,
+    reductionsCreditImpot: m.chargesDeductibles ? state.reductionsCreditImpot : initialState.reductionsCreditImpot,
+  };
+}
+
 // ── Frais professionnels ────────────────────────────────────
 export function calculerFraisReels(state: TaxState, qui: 'declarant' | 'conjoint'): number {
   const d = state.revenusSalariaux[qui];
@@ -73,133 +103,124 @@ export function calculerFraisForfait(salaire: number): number {
   return Math.min(salaire * 0.10, PARAMS.plafondFraisPro);
 }
 
+// Traitements et salaires au sens fiscal : salaires, avantages en nature,
+// part imposable des indemnités de licenciement, allocations chômage et
+// indemnités journalières. Tous ouvrent droit à la déduction de 10 % ou aux frais réels.
+export function traitementsBruts(state: TaxState, qui: 'declarant' | 'conjoint'): number {
+  const sal = state.revenusSalariaux[qui];
+  const rep = state.revenusRemplacement[qui];
+  return sal.salaires + sal.avantagesNature + rep.indemLicenciement + rep.chomage + rep.indemMaladie;
+}
+
 export function choisirFraisPro(state: TaxState, qui: 'declarant' | 'conjoint'): { montant: number; type: string } {
   const d = state.revenusSalariaux[qui];
-  const salaireBrut = d.salaires + d.avantagesNature;
   if (d.fraisPro === 'forfait') {
-    return { montant: calculerFraisForfait(salaireBrut), type: 'forfait' };
+    return { montant: calculerFraisForfait(traitementsBruts(state, qui)), type: 'forfait' };
   }
-  const reels = calculerFraisReels(state, qui);
-  return { montant: reels, type: 'reel' };
+  return { montant: calculerFraisReels(state, qui), type: 'reel' };
 }
 
 // ── Quotient familial ───────────────────────────────────────
 export function calculerParts(state: TaxState): number {
   const { situationPersonnelle: sp } = state;
-  let parts = sp.situationMaritale === 'marie_pacse' ? 2 : 1;
+  const estCouple = sp.situationMaritale === 'marie_pacse';
+  let parts = estCouple ? 2 : 1;
 
-  let enfantsExclusifs = 0;
-  let enfantsAlternee = 0;
-  sp.enfants.forEach(e => {
-    if (e.gardeAlternee) enfantsAlternee++;
-    else enfantsExclusifs++;
-  });
+  const enfantsExclusifs = sp.enfants.filter(e => !e.gardeAlternee).length;
+  const enfantsAlternee = sp.enfants.length - enfantsExclusifs;
 
-  // Calcul parts pour enfants en garde exclusive
-  if (enfantsExclusifs >= 1) parts += 0.5;
-  if (enfantsExclusifs >= 2) parts += 0.5;
-  if (enfantsExclusifs >= 3) parts += (enfantsExclusifs - 2) * 1;
+  // Les enfants en garde exclusive sont décomptés en premier. Rangs 1 et 2 :
+  // une demi-part ; à partir du rang 3 : une part. Moitié en garde alternée.
+  for (let rang = 1; rang <= sp.enfants.length; rang++) {
+    const partEntiere = rang <= 2 ? 0.5 : 1;
+    parts += rang <= enfantsExclusifs ? partEntiere : partEntiere / 2;
+  }
 
-  // Garde alternée : moitié de la demi-part
-  parts += enfantsAlternee * 0.25;
-
-  // Parent isolé (+0.5)
-  if (sp.parentIsole && sp.situationMaritale !== 'marie_pacse') {
-    if (sp.enfants.length > 0) parts += 0.5;
+  // Parent isolé (case T)
+  if (sp.parentIsole && !estCouple) {
+    if (enfantsExclusifs > 0) parts += 0.5;
+    else if (enfantsAlternee >= 2) parts += 0.5;
+    else if (enfantsAlternee === 1) parts += 0.25;
   }
 
   // Invalide déclarant (+0.5)
   if (sp.invalide) parts += 0.5;
-  // Ancien combattant (+0.5 si >75 ans)
+  // Ancien combattant (+0.5 si plus de 74 ans)
   if (sp.ancienCombattant) {
-    const age = 2025 - parseInt(sp.anneeNaissanceDeclarant || '1950');
-    if (age >= 75) parts += 0.5;
+    const age = PARAMS.anneeRevenus - parseInt(sp.anneeNaissanceDeclarant || '1950');
+    if (age > 74) parts += 0.5;
   }
   // Invalide conjoint
-  if (sp.invalideConjoint && sp.situationMaritale === 'marie_pacse') parts += 0.5;
+  if (sp.invalideConjoint && estCouple) parts += 0.5;
 
   return parts;
 }
 
 // ── Revenu foncier : calcul du déficit ─────────────────────
-export function calculerFoncier(state: TaxState): FoncierCalc {
+export function calculerFoncier(stateBrut: TaxState): FoncierCalc {
+  const state = etatEffectif(stateBrut);
   const f = state.revenusFonciers;
 
+  // Location directe
+  let recettes = 0;
+  let interets = 0;
+  let autresCharges = 0;
+
   if (f.regime === 'micro') {
-    const base = f.microFoncierCA;
-    const net = base * 0.70;
-    return {
-      totalRecettes: base,
-      totalCharges: base * 0.30,
-      resultatNet: net,
-      deficitImputableGlobal: 0,
-      deficitReportable: 0,
-      case4BA: net > 0 ? net : 0,
-      case4BB: 0,
-      case4BC: 0,
-      case4BD: 0,
-    };
+    recettes = f.microFoncierCA;
+    autresCharges = recettes * 0.30;
+  } else if (f.regime === 'reel') {
+    const c = f.charges;
+    recettes = f.recettes.loyersNus + f.recettes.chargesRecuperees + f.recettes.subventionsANAH;
+    interets = c.interetsEmprunt;
+    // Seule la TEOM récupérée sur le locataire n'est pas déductible, pas toute la taxe foncière
+    const teomNonDeductible = c.teomRecuperee ? Math.min(c.teomMontant, c.taxeFonciere) : 0;
+    autresCharges =
+      Math.max(0, c.chargesCopro - c.chargesRecupereesSurLocataire) +
+      c.assuranceADI +
+      c.fraisGarantie +
+      c.mainleveeHypotheque +
+      c.assurancePNO +
+      c.assuranceGLI +
+      (c.taxeFonciere - teomNonDeductible) +
+      c.fraisGestionAgence +
+      c.fraisGestionDirect +
+      c.fraisGestionDirectNbLocaux * 20 + // forfait de 20 € par local
+      c.fraisProcedure +
+      c.travauxEntretien +
+      c.travauxAmelioration;
   }
 
-  const recettes = f.recettes.loyersNus + f.recettes.chargesRecuperees + f.recettes.subventionsANAH;
-  const teomDeductible = f.charges.teomRecuperee ? 0 : 0; // TEOM déjà dans taxe foncière
-  const gestionDirect = f.charges.fraisGestionDirectNbLocaux * 20;
-  const chargesHorsInterets =
-    Math.max(0, f.charges.chargesCopro - f.charges.chargesRecupereesSurLocataire) +
-    f.charges.assuranceADI +
-    f.charges.fraisGarantie +
-    f.charges.mainleveeHypotheque +
-    f.charges.assurancePNO +
-    f.charges.assuranceGLI +
-    (f.charges.teomRecuperee ? 0 : f.charges.taxeFonciere) +
-    f.charges.fraisGestionAgence +
-    (f.charges.fraisGestionDirect > 0 ? f.charges.fraisGestionDirect : gestionDirect) +
-    f.charges.fraisProcedure +
-    f.charges.travauxEntretien +
-    f.charges.travauxAmelioration;
-
-  const interets = f.charges.interetsEmprunt;
-  const totalCharges = chargesHorsInterets + interets;
+  const totalCharges = interets + autresCharges;
   const resultatNet = recettes - totalCharges;
 
-  // Règle : les intérêts ne peuvent pas créer de déficit imputable sur revenu global
-  const resultatSansInterets = recettes - chargesHorsInterets;
+  // Quote-part de SCI à l'IR : un bénéfice s'ajoute aux recettes, un déficit
+  // est traité comme une charge autre que des intérêts (détail inconnu ici).
+  let recettesTotales = recettes;
+  let autresChargesTotales = autresCharges;
+  if (state.revenusSCI.typeSCI === 'ir') {
+    recettesTotales += state.revenusSCI.quotePartResultat;
+    autresChargesTotales += state.revenusSCI.quotePartDeficit;
+  }
+
+  const resultatGlobal = recettesTotales - interets - autresChargesTotales;
+  const deficitsAnterieurs = f.deficitAnterieurs + state.chargesDeductibles.deficitFoncierAnterieur;
 
   let case4BA = 0;
-  let case4BB = 0;
-  let case4BC = 0;
-  let case4BD = 0;
   let deficitImputableGlobal = 0;
   let deficitReportable = 0;
 
-  if (resultatNet >= 0) {
-    case4BA = resultatNet;
+  if (resultatGlobal >= 0) {
+    // Les déficits antérieurs s'imputent sur le bénéfice foncier de l'année
+    case4BA = Math.max(0, resultatGlobal - deficitsAnterieurs);
   } else {
-    // Déficit total
-    if (resultatSansInterets >= 0) {
-      // Seuls les intérêts créent le déficit => reportable uniquement
-      deficitReportable = Math.abs(resultatNet);
-      case4BD = deficitReportable;
-    } else {
-      // Les charges hors intérêts créent un déficit
-      const deficitHorsInterets = Math.abs(resultatSansInterets);
-      deficitImputableGlobal = Math.min(deficitHorsInterets, 10700);
-      case4BC = deficitImputableGlobal;
-      const exces = deficitHorsInterets > 10700 ? deficitHorsInterets - 10700 : 0;
-      deficitReportable = exces + interets;
-      case4BD = deficitReportable;
-    }
-  }
-
-  // Quote-part SCI
-  if (state.revenusSCI.typeSCI === 'ir') {
-    if (state.revenusSCI.quotePartResultat > 0) {
-      case4BA += state.revenusSCI.quotePartResultat;
-    } else if (state.revenusSCI.quotePartDeficit > 0) {
-      const addDeficit = state.revenusSCI.quotePartDeficit;
-      deficitImputableGlobal = Math.min(deficitImputableGlobal + addDeficit, 10700);
-      case4BC = deficitImputableGlobal;
-    }
+    const deficit = -resultatGlobal;
+    // Les intérêts s'imputent en priorité sur les recettes : seule la fraction
+    // des intérêts qui dépasse les recettes est exclue de l'imputation sur le revenu global.
+    const deficitDuAuxInterets = Math.max(0, interets - recettesTotales);
+    const deficitAutresCharges = deficit - deficitDuAuxInterets;
+    deficitImputableGlobal = Math.min(deficitAutresCharges, PARAMS.plafondDeficitFoncier);
+    deficitReportable = deficit - deficitImputableGlobal;
   }
 
   return {
@@ -209,9 +230,9 @@ export function calculerFoncier(state: TaxState): FoncierCalc {
     deficitImputableGlobal,
     deficitReportable,
     case4BA,
-    case4BB,
-    case4BC,
-    case4BD,
+    case4BB: 0,
+    case4BC: deficitImputableGlobal,
+    case4BD: deficitReportable,
   };
 }
 
@@ -245,39 +266,64 @@ function fractionRenteViagere(age: number): number {
   return 0.30;
 }
 
+// ── IFI ─────────────────────────────────────────────────────
+export function calculerIFI(state: TaxState): number {
+  if (!state.ifi.assujetti) return 0;
+  const net = state.ifi.valeurBrute - state.ifi.passifDeductible;
+  if (net < 1_300_000) return 0;
+  const tranches: [number, number][] = [
+    [800_000, 0],
+    [1_300_000, 0.005],
+    [2_570_000, 0.007],
+    [5_000_000, 0.01],
+    [10_000_000, 0.0125],
+    [Infinity, 0.015],
+  ];
+  let ifi = 0;
+  let prev = 0;
+  for (const [seuil, taux] of tranches) {
+    if (net > prev) ifi += (Math.min(net, seuil) - prev) * taux;
+    prev = seuil;
+  }
+  // Décote entre 1,3 M€ et 1,4 M€
+  if (net < 1_400_000) ifi -= 17_500 - 0.0125 * net;
+  return Math.max(0, ifi);
+}
+
+// ── Plafond PER ─────────────────────────────────────────────
+export function calculerPlafondPER(stateBrut: TaxState): number {
+  const state = etatEffectif(stateBrut);
+  const salD = state.revenusSalariaux.declarant.salaires + state.revenusSalariaux.declarant.avantagesNature;
+  const salC = state.revenusSalariaux.conjoint.salaires + state.revenusSalariaux.conjoint.avantagesNature;
+  return Math.max(Math.min((salD + salC) * 0.10, PARAMS.plafondPER), PARAMS.minPER);
+}
+
 // ── Calcul complet ──────────────────────────────────────────
-export function calculerImpot(state: TaxState): TaxCalculation {
+export function calculerImpot(stateBrut: TaxState): TaxCalculation {
+  const state = etatEffectif(stateBrut);
   const params = PARAMS;
   const parts = calculerParts(state);
   const estCouple = state.situationPersonnelle.situationMaritale === 'marie_pacse';
 
-  // --- Revenus salariaux ---
-  const fraisD = choisirFraisPro(state, 'declarant');
-  const fraisC = choisirFraisPro(state, 'conjoint');
-  const salD = state.revenusSalariaux.declarant.salaires + state.revenusSalariaux.declarant.avantagesNature;
-  const salC = state.revenusSalariaux.conjoint.salaires + state.revenusSalariaux.conjoint.avantagesNature;
-  const revSalNet = Math.max(0, salD - fraisD.montant) + Math.max(0, salC - fraisC.montant);
+  // --- Traitements et salaires (y compris chômage, IJ, licenciement imposable) ---
+  // Les heures supplémentaires exonérées (1GH) ne sont pas imposées.
+  const traitD = traitementsBruts(state, 'declarant');
+  const traitC = traitementsBruts(state, 'conjoint');
+  const revSalNet =
+    Math.max(0, traitD - choisirFraisPro(state, 'declarant').montant) +
+    Math.max(0, traitC - choisirFraisPro(state, 'conjoint').montant);
 
-  // Heures sup exonérées : non incluses dans 1AJ
-  const heuresSupD = state.revenusSalariaux.declarant.heuresSup;
-  const heuresSupC = state.revenusSalariaux.conjoint.heuresSup;
-
-  // --- Revenus de remplacement ---
+  // --- Pensions (retraite + invalidité) : abattement de 10 % plafonné par foyer ---
   const repD = state.revenusRemplacement.declarant;
   const repC = state.revenusRemplacement.conjoint;
-  const retraiteD = repD.retraite * 0.9;
-  const retraiteC = repC.retraite * 0.9;
-  const abattRetraite = Math.min((repD.retraite + repC.retraite) * 0.1, params.plafondAbattRetraite);
+  const pensions = repD.retraite + repC.retraite + repD.invalidite + repC.invalidite;
+  const abattPensions = Math.min(pensions * 0.10, params.plafondAbattRetraite);
 
-  const renteD = repD.renteViagere * fractionRenteViagere(repD.ageRenteViagere);
-  const renteC = repC.renteViagere * fractionRenteViagere(repC.ageRenteViagere);
+  const rentes =
+    repD.renteViagere * fractionRenteViagere(repD.ageRenteViagere) +
+    repC.renteViagere * fractionRenteViagere(repC.ageRenteViagere);
 
-  const revRemplacement =
-    repD.chomage + repC.chomage +
-    repD.indemMaladie + repC.indemMaladie +
-    repD.retraite - abattRetraite +
-    repD.invalidite + repC.invalidite +
-    renteD + renteC;
+  const revRemplacement = pensions - abattPensions + rentes;
 
   // --- Indépendant ---
   let revIndependant = 0;
@@ -289,7 +335,7 @@ export function calculerImpot(state: TaxState): TaxCalculation {
     else if (type === 'services_bic') revIndependant += ca * (1 - 0.50);
     else if (type === 'services_bnc') revIndependant += ca * (1 - 0.34);
   }
-  if (ind.reel.actif) revIndependant += ind.reel.resultatNet;
+  if (ind.reel.actif) revIndependant += ind.reel.resultatNet - ind.reel.deficit;
   if (ind.gerantSarl.actif) {
     const remun = ind.gerantSarl.remuneration;
     if (ind.gerantSarl.fraisPro === 'forfait') revIndependant += Math.max(0, remun - Math.min(remun * 0.1, params.plafondFraisPro));
@@ -299,27 +345,33 @@ export function calculerImpot(state: TaxState): TaxCalculation {
   // --- Foncier ---
   const foncierCalc = calculerFoncier(state);
 
-  // --- LMNP ---
+  // --- Location meublée ---
   let revLMNP = 0;
   const lmnp = state.revenusLMNP;
-  if (state.modules.locationMeublee) {
-    if (lmnp.regime === 'micro') {
-      revLMNP = lmnp.recettes * 0.50;
-    } else if (lmnp.regime === 'reel') {
-      const chargesLMNP = Object.values(lmnp.charges).reduce((a, b) => a + b, 0);
-      revLMNP = Math.max(0, lmnp.recettes - chargesLMNP);
-    }
+  if (lmnp.regime === 'micro') {
+    revLMNP = lmnp.recettes * 0.50;
+  } else if (lmnp.regime === 'reel') {
+    const chargesLMNP = Object.values(lmnp.charges).reduce((a, b) => a + b, 0);
+    revLMNP = Math.max(0, lmnp.recettes - chargesLMNP);
   }
 
   // --- Patrimoine financier ---
+  // PFU (par défaut) : 12,8 % d'impôt sur intérêts, dividendes et plus-values.
+  // Option barème (2OP) : globale, tout passe au barème avec abattement de 40 % sur les dividendes.
   const pat = state.revenusPatrimoine;
-  let revPatrimoine = pat.interets;
-  if (pat.optionBarem) {
-    revPatrimoine += pat.dividendes * 0.60; // après abattement 40%
-    revPatrimoine += pat.revenusDistribuesFCP;
-  }
-  // PV mobilières si barème (sinon PFU)
   const pvMob = Math.max(0, pat.plusValuesMobilieres - pat.moinsValuesMobilieres);
+  const revenusMobiliers = pat.interets + pat.dividendes + pat.revenusDistribuesFCP;
+  // Assurance-vie : abattement annuel sur les contrats de plus de 8 ans
+  const avPlus8 = Math.max(0, pat.assuranceVieCt8ans - (estCouple ? 9200 : 4600));
+  const avMoins8 = pat.assuranceVieMt8ans;
+
+  let revPatrimoineBareme = 0;
+  let impotForfaitaire = 0;
+  if (pat.optionBarem) {
+    revPatrimoineBareme = pat.interets + pat.dividendes * 0.60 + pat.revenusDistribuesFCP + pvMob + avPlus8 + avMoins8;
+  } else {
+    impotForfaitaire = (revenusMobiliers + pvMob + avMoins8) * params.tauxPFU + avPlus8 * 0.075;
+  }
 
   // --- Revenu brut global ---
   const revenuBrutGlobal =
@@ -328,14 +380,12 @@ export function calculerImpot(state: TaxState): TaxCalculation {
     revIndependant +
     foncierCalc.case4BA +
     revLMNP +
-    revPatrimoine;
+    revPatrimoineBareme;
 
   // --- Charges déductibles ---
   const ch = state.chargesDeductibles;
-  const revN1 = salD + salC;
-  const plafondPER = Math.max(Math.min(revN1 * 0.10, params.plafondPER), params.minPER);
   const pensionAlim = ch.pensionEnfantMajeur + ch.pensionExConjoint + ch.pensionParents;
-  const epargneRetraite = Math.min(ch.versementsPER + ch.versementsPERP + ch.versementsMadelin, plafondPER);
+  const epargneRetraite = Math.min(ch.versementsPER + ch.versementsPERP + ch.versementsMadelin, calculerPlafondPER(state));
   const chargesDeductiblesTotal = pensionAlim + epargneRetraite + ch.csgDeductible + foncierCalc.case4BC;
 
   // --- Revenu net global ---
@@ -343,76 +393,66 @@ export function calculerImpot(state: TaxState): TaxCalculation {
 
   // --- Calcul IR ---
   const partsBase = estCouple ? 2 : 1;
-  const quotientBase = revenuNetGlobal / partsBase;
-  const impotSansParts = calculerImpotBrut(quotientBase) * partsBase;
-
+  const impotSansParts = calculerImpotBrut(revenuNetGlobal / partsBase) * partsBase;
   const quotientTotal = revenuNetGlobal / parts;
   const impotAvecParts = calculerImpotBrut(quotientTotal) * parts;
-
   const impotApresQFBrut = plafonnementQF(impotSansParts, impotAvecParts, parts, estCouple);
 
-  const [seuilDecoteCel, montDecoteCel] = params.decoteCelibataire;
-  const [seuilDecoteCouple, montDecoteCouple] = params.decoteCouple;
+  const [seuilDecote, montantDecote] = estCouple ? params.decoteCouple : params.decoteCelibataire;
   let decote = 0;
-  if (!estCouple && impotApresQFBrut > 0 && impotApresQFBrut <= seuilDecoteCel) {
-    decote = Math.max(0, montDecoteCel - impotApresQFBrut * 0.4525);
-  } else if (estCouple && impotApresQFBrut > 0 && impotApresQFBrut <= seuilDecoteCouple) {
-    decote = Math.max(0, montDecoteCouple - impotApresQFBrut * 0.4525);
+  if (impotApresQFBrut > 0 && impotApresQFBrut <= seuilDecote) {
+    decote = Math.min(impotApresQFBrut, Math.max(0, montantDecote - impotApresQFBrut * 0.4525));
   }
+  const impotApresDecote = impotApresQFBrut - decote;
 
-  const impotApresDecote = Math.max(0, impotApresQFBrut - decote);
-
-  // --- Réductions d'impôt ---
+  // --- Réductions d'impôt (non remboursables) ---
   const red = state.reductionsCreditImpot;
-  let reductionsTotal = 0;
-  // Dons urgence 75% (plafond 1000€)
-  const donsUrgence1000 = Math.min(red.donsUrgence, 1000);
-  const donsUrgenceReste = Math.max(0, red.donsUrgence - 1000);
-  reductionsTotal += donsUrgence1000 * 0.75;
-  reductionsTotal += (red.donsAssociations + donsUrgenceReste) * 0.66;
-  reductionsTotal += red.donsPartis * 0.66;
-  // Enseignement scolaire
-  reductionsTotal += red.enfantsCollege * 61;
-  reductionsTotal += red.enfantsLycee * 153;
-  reductionsTotal += red.enfantsSup * 183;
-  // Pinel
-  reductionsTotal += red.investPinel * 0.12;
-  // PME
-  reductionsTotal += red.investPME * 0.25;
-  reductionsTotal += (red.investFCPI) * 0.18;
+  // Dons : 75 % jusqu'à 1 000 €, 66 % au-delà dans la limite de 20 % du revenu imposable
+  const donsUrgence75 = Math.min(red.donsUrgence, 1000);
+  const dons66 = Math.min(
+    red.donsAssociations + (red.donsUrgence - donsUrgence75) + Math.min(red.donsPartis, 15000),
+    revenuNetGlobal * 0.20,
+  );
+  const reductionsHorsPlafond =
+    donsUrgence75 * 0.75 +
+    dons66 * 0.66 +
+    red.enfantsCollege * 61 +
+    red.enfantsLycee * 153 +
+    red.enfantsSup * 183 +
+    Math.min(red.fraisComptabilite * 2 / 3, 915) +
+    pat.avoirFiscal;
+  let reductionsPlafonnees = red.investPinel * 0.12 + red.investPME * 0.25 + red.investFCPI * 0.18;
 
-  // --- Crédits d'impôt ---
-  let creditsTotal = 0;
-  // Emploi à domicile
-  const plafonEmploi = 12000 + (state.situationPersonnelle.enfants.length * 1500);
-  creditsTotal += Math.min(red.emploiDomicile, plafonEmploi) * 0.50;
-  // Garde enfant
-  creditsTotal += Math.min(red.gardeEnfant1, 3500) * 0.50;
-  creditsTotal += Math.min(red.gardeEnfant2, 3500) * 0.50;
-  creditsTotal += Math.min(red.gardeEnfant3, 3500) * 0.50;
-  // Cotisations syndicales
-  creditsTotal += red.cotisationsSyndicales * 0.66;
-  // Frais comptabilité
-  creditsTotal += Math.min(red.fraisComptabilite, 915) * 0.50;
+  // --- Crédits d'impôt (remboursables) ---
+  const plafondEmploi = Math.min(12000 + state.situationPersonnelle.enfants.length * 1500, 15000);
+  let creditsPlafonnes =
+    Math.min(red.emploiDomicile, plafondEmploi) * 0.50 +
+    Math.min(red.gardeEnfant1, 3500) * 0.50 +
+    Math.min(red.gardeEnfant2, 3500) * 0.50 +
+    Math.min(red.gardeEnfant3, 3500) * 0.50;
+  // Cotisations syndicales : 66 % dans la limite de 1 % des salaires et pensions
+  const creditSyndical = Math.min(red.cotisationsSyndicales, (traitD + traitC + pensions) * 0.01) * 0.66;
 
-  const impotApresReductions = Math.max(0, impotApresDecote - reductionsTotal - creditsTotal);
+  // Plafonnement global des niches fiscales : 10 000 € par foyer
+  const excedentNiches = Math.max(0, reductionsPlafonnees + creditsPlafonnes - 10000);
+  const retraitReductions = Math.min(excedentNiches, reductionsPlafonnees);
+  reductionsPlafonnees -= retraitReductions;
+  creditsPlafonnes -= excedentNiches - retraitReductions;
 
-  // --- Prélèvements sociaux (17,2%) sur revenus du patrimoine ---
-  const basePS =
-    foncierCalc.case4BA +
-    revLMNP +
-    (pat.optionBarem ? (pat.dividendes + pat.revenusDistribuesFCP) : 0) +
-    pat.interets +
-    pvMob;
-  const prelevementsSociaux = basePS * 0.172;
+  // Une réduction ne peut pas dépasser l'impôt ; un crédit est remboursé
+  const reductionsTotal = Math.min(reductionsHorsPlafond + reductionsPlafonnees, impotApresDecote);
+  const creditsTotal = creditsPlafonnes + creditSyndical;
+  const impotBareme = impotApresDecote - reductionsTotal - creditsTotal;
 
-  // Si PFU : flat tax 30% sur dividendes + PV mobilières
-  let pfuTotal = 0;
-  if (!pat.optionBarem) {
-    pfuTotal = (pat.dividendes + pat.revenusDistribuesFCP + pvMob) * 0.30;
-  }
+  // --- Prélèvements sociaux ---
+  // 17,2 % : revenus fonciers, intérêts et dividendes perçus en 2025.
+  // 18,6 % : plus-values mobilières et location meublée non professionnelle (LFSS 2026).
+  // LMP : cotisations sociales, pas de prélèvements sociaux. Assurance-vie : prélevés par l'assureur.
+  const prelevementsSociaux =
+    (foncierCalc.case4BA + revenusMobiliers) * params.tauxPS +
+    (pvMob + (lmnp.statut === 'lmnp' ? revLMNP : 0)) * params.tauxPSMajore;
 
-  const impotNet = impotApresReductions + prelevementsSociaux + pfuTotal;
+  const impotNet = impotBareme + impotForfaitaire + prelevementsSociaux;
 
   return {
     revenuBrutGlobal,
@@ -427,114 +467,120 @@ export function calculerImpot(state: TaxState): TaxCalculation {
     decote,
     reductionsTotal,
     creditsTotal,
+    impotForfaitaire,
     prelevementsSociaux,
     impotNet,
+    ifi: calculerIFI(state),
     foncierCalc,
   };
 }
 
 // ── Génération des cases fiscales ──────────────────────────
-export function genererCases(state: TaxState, calc: TaxCalculation): CaseFiscale[] {
+export function genererCases(stateBrut: TaxState, calc: TaxCalculation): CaseFiscale[] {
+  const state = etatEffectif(stateBrut);
   const cases: CaseFiscale[] = [];
   const add = (code: string, libelle: string, montant: number, formulaire: string, justificatif: string) => {
-    if (montant !== 0) cases.push({ code, libelle, montant, formulaire, justificatif });
+    if (montant > 0) cases.push({ code, libelle, montant, formulaire, justificatif });
   };
 
-  // Salaires
-  const fraisD = choisirFraisPro(state, 'declarant');
-  const fraisC = choisirFraisPro(state, 'conjoint');
+  // Salaires (les indemnités journalières et la part imposable du licenciement se déclarent avec les salaires)
   const sal = state.revenusSalariaux;
-  if (sal.declarant.salaires > 0) add('1AJ', 'Salaires — Vous', sal.declarant.salaires + sal.declarant.avantagesNature, '2042 p.1', 'Bulletins de salaire / AER employeur');
-  if (sal.conjoint.salaires > 0) add('1BJ', 'Salaires — Conjoint', sal.conjoint.salaires + sal.conjoint.avantagesNature, '2042 p.1', 'Bulletins de salaire / AER employeur');
-  if (sal.declarant.fraisPro === 'reel' && fraisD.montant > 0) add('1AK', 'Frais réels — Vous', fraisD.montant, '2042 p.1', 'Justificatifs de frais (km, repas…)');
-  if (sal.conjoint.fraisPro === 'reel' && fraisC.montant > 0) add('1BK', 'Frais réels — Conjoint', fraisC.montant, '2042 p.1', 'Justificatifs de frais (km, repas…)');
-  if (sal.declarant.heuresSup > 0) add('1GH', 'Heures supplémentaires exonérées — Vous', sal.declarant.heuresSup, '2042 p.1', 'Bulletins de salaire');
-  if (sal.conjoint.heuresSup > 0) add('1HH', 'Heures supplémentaires exonérées — Conjoint', sal.conjoint.heuresSup, '2042 p.1', 'Bulletins de salaire');
-
-  // Remplacement
   const repD = state.revenusRemplacement.declarant;
   const repC = state.revenusRemplacement.conjoint;
-  if (repD.chomage > 0) add('1AP', 'Allocations chômage — Vous', repD.chomage, '2042 p.1', 'Relevé Pôle Emploi');
-  if (repC.chomage > 0) add('1BP', 'Allocations chômage — Conjoint', repC.chomage, '2042 p.1', 'Relevé Pôle Emploi');
-  if (repD.retraite > 0) add('1AS', 'Pensions de retraite — Vous', repD.retraite, '2042 p.1', 'Attestation de retraite');
-  if (repC.retraite > 0) add('1BS', 'Pensions de retraite — Conjoint', repC.retraite, '2042 p.1', 'Attestation de retraite');
-  if (repD.indemMaladie > 0) add('1AZ', 'Indemnités maladie/invalidité — Vous', repD.indemMaladie + repD.invalidite, '2042 p.1', 'Attestation CPAM');
-  if (repC.indemMaladie > 0) add('1BZ', 'Indemnités maladie/invalidité — Conjoint', repC.indemMaladie + repC.invalidite, '2042 p.1', 'Attestation CPAM');
-  if (repD.renteViagere > 0) add('1AW', 'Rente viagère — Vous', repD.renteViagere, '2042 p.1', 'Attestation crédirentier');
-  if (repC.renteViagere > 0) add('1BW', 'Rente viagère — Conjoint', repC.renteViagere, '2042 p.1', 'Attestation crédirentier');
+  add('1AJ', 'Salaires — Vous', sal.declarant.salaires + sal.declarant.avantagesNature + repD.indemMaladie + repD.indemLicenciement, '2042 p.1', 'Bulletins de salaire / attestation CPAM');
+  add('1BJ', 'Salaires — Conjoint', sal.conjoint.salaires + sal.conjoint.avantagesNature + repC.indemMaladie + repC.indemLicenciement, '2042 p.1', 'Bulletins de salaire / attestation CPAM');
+  if (sal.declarant.fraisPro === 'reel') add('1AK', 'Frais réels — Vous', calculerFraisReels(state, 'declarant'), '2042 p.1', 'Justificatifs de frais (km, repas…)');
+  if (sal.conjoint.fraisPro === 'reel') add('1BK', 'Frais réels — Conjoint', calculerFraisReels(state, 'conjoint'), '2042 p.1', 'Justificatifs de frais (km, repas…)');
+  add('1GH', 'Heures supplémentaires exonérées — Vous', sal.declarant.heuresSup, '2042 p.1', 'Bulletins de salaire');
+  add('1HH', 'Heures supplémentaires exonérées — Conjoint', sal.conjoint.heuresSup, '2042 p.1', 'Bulletins de salaire');
+
+  // Remplacement
+  add('1AP', 'Allocations chômage — Vous', repD.chomage, '2042 p.1', 'Relevé France Travail');
+  add('1BP', 'Allocations chômage — Conjoint', repC.chomage, '2042 p.1', 'Relevé France Travail');
+  add('1AS', 'Pensions de retraite — Vous', repD.retraite, '2042 p.1', 'Attestation de retraite');
+  add('1BS', 'Pensions de retraite — Conjoint', repC.retraite, '2042 p.1', 'Attestation de retraite');
+  add('1AZ', 'Pensions d\'invalidité — Vous', repD.invalidite, '2042 p.1', 'Attestation CPAM');
+  add('1BZ', 'Pensions d\'invalidité — Conjoint', repC.invalidite, '2042 p.1', 'Attestation CPAM');
+  add('1AW', 'Rente viagère — Vous', repD.renteViagere, '2042 p.1', 'Attestation crédirentier');
+  add('1BW', 'Rente viagère — Conjoint', repC.renteViagere, '2042 p.1', 'Attestation crédirentier');
 
   // Indépendant
   const ind = state.revenusIndependant;
   if (ind.microEntreprise.actif) {
     const ca = ind.microEntreprise.chiffreAffaires;
-    if (ind.microEntreprise.typeActivite === 'vente') add('5KO', 'Micro-BIC vente de marchandises', ca, '2042C', 'Livre de recettes auto-entrepreneur');
-    if (ind.microEntreprise.typeActivite === 'services_bic') add('5KP', 'Micro-BIC prestations de services', ca, '2042C', 'Livre de recettes auto-entrepreneur');
-    if (ind.microEntreprise.typeActivite === 'services_bnc') add('5HQ', 'Micro-BNC prestations de services', ca, '2042C', 'Livre de recettes auto-entrepreneur');
-    if (ind.microEntreprise.versementLiberatoire) add('5KA', 'Versement libératoire — CA déjà imposé', ca, '2042C', 'Attestation URSSAF');
+    const type = ind.microEntreprise.typeActivite;
+    if (ind.microEntreprise.versementLiberatoire) {
+      // Avec le versement libératoire, le CA se déclare dans des cases dédiées
+      if (type === 'vente') add('5TA', 'Micro-BIC vente — versement libératoire', ca, '2042C PRO', 'Attestation URSSAF');
+      if (type === 'services_bic') add('5TB', 'Micro-BIC services — versement libératoire', ca, '2042C PRO', 'Attestation URSSAF');
+      if (type === 'services_bnc') add('5TE', 'Micro-BNC — versement libératoire', ca, '2042C PRO', 'Attestation URSSAF');
+    } else {
+      if (type === 'vente') add('5KO', 'Micro-BIC vente de marchandises', ca, '2042C PRO', 'Livre de recettes auto-entrepreneur');
+      if (type === 'services_bic') add('5KP', 'Micro-BIC prestations de services', ca, '2042C PRO', 'Livre de recettes auto-entrepreneur');
+      if (type === 'services_bnc') add('5HQ', 'Micro-BNC prestations de services', ca, '2042C PRO', 'Livre de recettes auto-entrepreneur');
+    }
   }
   if (ind.reel.actif) {
-    if (ind.reel.typeFiscal === 'bnc') add('5QC', 'BNC réel — Bénéfice', ind.reel.resultatNet, '2042C', 'Déclaration 2035');
-    else add('5KC', 'BIC réel — Bénéfice', ind.reel.resultatNet, '2042C', 'Déclaration 2031');
+    if (ind.reel.typeFiscal === 'bnc') add('5QC', 'BNC réel — Bénéfice', ind.reel.resultatNet, '2042C PRO', 'Déclaration 2035');
+    else add('5KC', 'BIC réel — Bénéfice', ind.reel.resultatNet, '2042C PRO', 'Déclaration 2031');
   }
   if (ind.gerantSarl.actif) add('1GB', 'Rémunération gérance art. 62', ind.gerantSarl.remuneration, '2042 p.1', 'Bulletin de gérance');
 
-  // Foncier
+  // Foncier (location directe et quote-part de SCI)
   const fc = calc.foncierCalc;
-  if (state.revenusFonciers.regime === 'micro' && fc.resultatNet > 0) add('4BE', 'Revenus fonciers micro-foncier', state.revenusFonciers.microFoncierCA, '2042 p.3', 'Aucun justificatif requis (abattement forfaitaire 30%)');
-  if (state.revenusFonciers.regime === 'reel') {
-    if (fc.case4BA > 0) add('4BA', 'Revenus fonciers nets (régime réel)', fc.case4BA, '2042 p.3 + 2044', 'Voir déclaration 2044');
-    if (fc.case4BC > 0) add('4BC', 'Déficit foncier imputable sur revenu global', fc.case4BC, '2042 p.3', 'Voir déclaration 2044');
-    if (fc.case4BD > 0) add('4BD', 'Déficit foncier reportable (10 ans)', fc.case4BD, '2042 p.3', 'Voir déclaration 2044');
+  if (state.revenusFonciers.regime === 'micro') {
+    add('4BE', 'Revenus fonciers micro-foncier', state.revenusFonciers.microFoncierCA, '2042 p.3', 'Aucun justificatif requis (abattement forfaitaire 30%)');
+  } else {
+    add('4BA', 'Revenus fonciers nets (régime réel)', fc.case4BA, '2042 p.3 + 2044', 'Voir déclaration 2044 / relevé de la SCI');
   }
+  add('4BC', 'Déficit foncier imputable sur revenu global', fc.case4BC, '2042 p.3', 'Voir déclaration 2044');
+  add('4BD', 'Déficit foncier reportable (10 ans)', fc.case4BD, '2042 p.3', 'Voir déclaration 2044');
 
-  // LMNP
-  if (state.modules.locationMeublee) {
-    if (state.revenusLMNP.regime === 'micro') add('5ND', 'Location meublée — Micro-BIC', state.revenusLMNP.recettes, '2042C', 'Aucun justificatif requis (abattement 50%)');
-    if (state.revenusLMNP.regime === 'reel') {
-      const benefLMNP = Math.max(0, state.revenusLMNP.recettes - Object.values(state.revenusLMNP.charges).reduce((a, b) => a + b, 0));
-      if (benefLMNP > 0) add('5NA', 'LMNP régime réel — Bénéfice', benefLMNP, '2042C', 'Liasse 2031-SD + expert-comptable');
-    }
+  // Location meublée
+  const lmnp = state.revenusLMNP;
+  if (lmnp.regime === 'micro') add('5ND', 'Location meublée — Micro-BIC', lmnp.recettes, '2042C PRO', 'Aucun justificatif requis (abattement 50%)');
+  if (lmnp.regime === 'reel') {
+    const benefLMNP = lmnp.recettes - Object.values(lmnp.charges).reduce((a, b) => a + b, 0);
+    add('5NA', 'LMNP régime réel — Bénéfice', benefLMNP, '2042C PRO', 'Liasse 2031-SD + expert-comptable');
   }
 
   // Patrimoine financier
   const pat = state.revenusPatrimoine;
-  if (pat.interets > 0) add('2TR', 'Intérêts et produits de placement', pat.interets, '2042 p.2', 'IFU banque');
-  if (pat.dividendes > 0) add('2DC', 'Dividendes bruts', pat.dividendes, '2042 p.2', 'IFU banque / courtier');
-  if (pat.optionBarem) add('2OP', 'Option barème progressif (dividendes)', 1, '2042 p.2', 'Case à cocher — pas de montant');
-  if (pat.avoirFiscal > 0) add('2AB', 'Crédit impôt étranger', pat.avoirFiscal, '2042 p.2', 'IFU courtier');
-  if (pat.csgDeductible > 0) add('2BH', 'CSG déductible (pré-remplie)', pat.csgDeductible, '2042 p.2', 'Pré-remplie par l\'administration');
-  if (pat.plusValuesMobilieres > 0) add('3VG', 'Plus-values de cession valeurs mobilières', pat.plusValuesMobilieres, '2042 p.3', 'IFU courtier');
-  if (pat.moinsValuesMobilieres > 0) add('3VH', 'Moins-values imputables', pat.moinsValuesMobilieres, '2042 p.3', 'IFU courtier');
+  add('2TR', 'Intérêts et produits de placement', pat.interets, '2042 p.2', 'IFU banque');
+  add('2DC', 'Dividendes bruts', pat.dividendes, '2042 p.2', 'IFU banque / courtier');
+  add('2TS', 'Revenus distribués SICAV / FCP', pat.revenusDistribuesFCP, '2042 p.2', 'IFU banque / courtier');
+  if (pat.optionBarem) add('2OP', 'Option barème progressif (tous revenus et gains mobiliers)', 1, '2042 p.2', 'Case à cocher — pas de montant');
+  add('2AB', 'Crédit impôt étranger', pat.avoirFiscal, '2042 p.2', 'IFU courtier');
+  add('2BH', 'CSG déductible (pré-remplie)', pat.csgDeductible, '2042 p.2', 'Pré-remplie par l\'administration');
+  add('2CH', 'Assurance-vie de plus de 8 ans — produits', pat.assuranceVieCt8ans, '2042 p.2', 'IFU assureur');
+  add('3VG', 'Plus-values de cession valeurs mobilières', pat.plusValuesMobilieres, '2042 p.3', 'IFU courtier');
+  add('3VH', 'Moins-values imputables', pat.moinsValuesMobilieres, '2042 p.3', 'IFU courtier');
+  add('3VZ', 'Plus-value immobilière nette (déjà imposée chez le notaire)', pat.plusValueImmobiliere, '2042 p.3', 'Formulaire 2048 du notaire');
 
   // Charges déductibles
   const ch = state.chargesDeductibles;
-  if (ch.pensionEnfantMajeur > 0 || ch.pensionParents > 0) add('6EL', 'Pensions alimentaires (enfant majeur / parents)', ch.pensionEnfantMajeur + ch.pensionParents, '2042 p.4', 'Justificatifs de paiement ou forfaits officiels');
-  if (ch.pensionExConjoint > 0) add('6GU', 'Pension versée à l\'ex-conjoint', ch.pensionExConjoint, '2042 p.4', 'Décision judiciaire + justificatifs paiement');
-  const epargneRetraite = ch.versementsPER + ch.versementsPERP + ch.versementsMadelin;
-  if (epargneRetraite > 0) add('6NS', 'Versements PER / PERP / Madelin', epargneRetraite, '2042 p.4', 'Attestation organisme assureur');
+  add('6EL', 'Pensions alimentaires (enfant majeur / parents)', ch.pensionEnfantMajeur + ch.pensionParents, '2042 p.4', 'Justificatifs de paiement ou forfaits officiels');
+  add('6GU', 'Pension versée à l\'ex-conjoint', ch.pensionExConjoint, '2042 p.4', 'Décision judiciaire + justificatifs paiement');
+  add('6NS', 'Versements PER / PERP / Madelin', ch.versementsPER + ch.versementsPERP + ch.versementsMadelin, '2042 p.4', 'Attestation organisme assureur');
+  add('6DE', 'CSG déductible sur revenus du patrimoine', ch.csgDeductible, '2042 p.4', 'Pré-remplie par l\'administration');
 
   // Réductions / crédits
   const red = state.reductionsCreditImpot;
-  if (red.donsAssociations > 0) add('7UF', 'Dons associations intérêt général', red.donsAssociations, '2042 RICI', 'Reçu fiscal association');
-  if (red.donsUrgence > 0) add('7UD', 'Dons associations aide aux personnes', red.donsUrgence, '2042 RICI', 'Reçu fiscal association');
-  if (red.donsPartis > 0) add('7UH', 'Dons partis politiques', red.donsPartis, '2042 RICI', 'Reçu fiscal');
-  if (red.emploiDomicile > 0) add('7DB', 'Emploi à domicile (dépenses totales)', red.emploiDomicile, '2042 RICI', 'Attestation URSSAF ou relevé CESU');
-  if (red.gardeEnfant1 > 0) add('7GA', 'Garde enfant < 6 ans hors domicile — 1er', red.gardeEnfant1, '2042 RICI', 'Attestation CAF / PAJE / établissement');
-  if (red.gardeEnfant2 > 0) add('7GB', 'Garde enfant < 6 ans hors domicile — 2e', red.gardeEnfant2, '2042 RICI', 'Attestation CAF / PAJE / établissement');
-  if (red.gardeEnfant3 > 0) add('7GC', 'Garde enfant < 6 ans hors domicile — 3e', red.gardeEnfant3, '2042 RICI', 'Attestation CAF / PAJE / établissement');
-  if (red.enfantsCollege > 0) add('7EA', 'Enfant(s) au collège', red.enfantsCollege, '2042 RICI', 'Aucun justificatif requis');
-  if (red.enfantsLycee > 0) add('7EC', 'Enfant(s) au lycée', red.enfantsLycee, '2042 RICI', 'Aucun justificatif requis');
-  if (red.enfantsSup > 0) add('7EF', 'Enfant(s) dans le supérieur', red.enfantsSup, '2042 RICI', 'Aucun justificatif requis');
-  if (red.investPinel > 0) add('7QA', 'Investissement Pinel', red.investPinel, '2042 RICI', 'Attestation gestionnaire patrimoine');
-  if (red.investPME > 0) add('7CF', 'Souscription capital PME', red.investPME, '2042 RICI', 'Attestation PME');
-  if (red.cotisationsSyndicales > 0) add('7AC', 'Cotisations syndicales', red.cotisationsSyndicales, '2042 RICI', 'Attestation syndicale');
+  add('7UF', 'Dons associations intérêt général', red.donsAssociations, '2042 RICI', 'Reçu fiscal association');
+  add('7UD', 'Dons associations aide aux personnes', red.donsUrgence, '2042 RICI', 'Reçu fiscal association');
+  add('7UH', 'Dons partis politiques', red.donsPartis, '2042 RICI', 'Reçu fiscal');
+  add('7DB', 'Emploi à domicile (dépenses totales)', red.emploiDomicile, '2042 RICI', 'Attestation URSSAF ou relevé CESU');
+  add('7GA', 'Garde enfant < 6 ans hors domicile — 1er', red.gardeEnfant1, '2042 RICI', 'Attestation CAF / PAJE / établissement');
+  add('7GB', 'Garde enfant < 6 ans hors domicile — 2e', red.gardeEnfant2, '2042 RICI', 'Attestation CAF / PAJE / établissement');
+  add('7GC', 'Garde enfant < 6 ans hors domicile — 3e', red.gardeEnfant3, '2042 RICI', 'Attestation CAF / PAJE / établissement');
+  add('7EA', 'Enfant(s) au collège', red.enfantsCollege, '2042 RICI', 'Aucun justificatif requis');
+  add('7EC', 'Enfant(s) au lycée', red.enfantsLycee, '2042 RICI', 'Aucun justificatif requis');
+  add('7EF', 'Enfant(s) dans le supérieur', red.enfantsSup, '2042 RICI', 'Aucun justificatif requis');
+  add('7QA', 'Investissement Pinel', red.investPinel, '2042 RICI', 'Attestation gestionnaire patrimoine');
+  add('7CF', 'Souscription capital PME', red.investPME, '2042 RICI', 'Attestation PME');
+  add('7FQ', 'Souscription FCPI / FIP', red.investFCPI, '2042 RICI', 'Attestation de la société de gestion');
+  add('7AC', 'Cotisations syndicales', red.cotisationsSyndicales, '2042 RICI', 'Attestation syndicale');
+  add('7FF', 'Frais de comptabilité et d\'adhésion', red.fraisComptabilite, '2042 RICI', 'Factures expert-comptable / organisme agréé');
 
   return cases;
-}
-
-// ── Plafond PER ─────────────────────────────────────────────
-export function calculerPlafondPER(state: TaxState): number {
-  const salD = state.revenusSalariaux.declarant.salaires;
-  const salC = state.revenusSalariaux.conjoint.salaires;
-  return Math.max(Math.min((salD + salC) * 0.10, PARAMS.plafondPER), PARAMS.minPER);
 }

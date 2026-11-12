@@ -146,7 +146,7 @@ export function Module5Foncier({ state, dispatch }: Props) {
               />
             </div>
             <AlertBox variant="warning">
-              <strong>Règle importante :</strong> les intérêts d'emprunt ne peuvent pas créer de déficit imputable sur votre revenu global. Ils génèrent uniquement un déficit reportable sur les revenus fonciers des 10 années suivantes.
+              <strong>Règle importante :</strong> les intérêts d'emprunt s'imputent en priorité sur vos loyers. Seule la part des intérêts qui dépasse les loyers ne peut pas être imputée sur votre revenu global : elle est reportable sur les revenus fonciers des 10 années suivantes.
             </AlertBox>
             <p className="text-xs text-gray-500">Justificatif : attestation fiscale annuelle de la banque (à conserver)</p>
           </SectionCard>
@@ -188,6 +188,16 @@ export function Module5Foncier({ state, dispatch }: Props) {
                 tooltip="Si vous récupérez la TEOM auprès de votre locataire, vous ne pouvez pas la déduire (elle figure aussi en recette)."
               />
             </div>
+            {f.charges.teomRecuperee && (
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <CurrencyInput
+                  label="Montant de la TEOM récupérée"
+                  value={f.charges.teomMontant}
+                  onChange={v => updateChg({ teomMontant: v })}
+                  tooltip="Montant de la taxe d'enlèvement des ordures ménagères figurant sur votre avis de taxe foncière. Seul ce montant est retiré des charges déductibles."
+                />
+              </div>
+            )}
             <p className="text-xs text-gray-500 mt-2">Justificatif : avis de taxe foncière 2024 (à conserver)</p>
           </SectionCard>
 

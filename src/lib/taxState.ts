@@ -112,6 +112,7 @@ export const initialState: TaxState = {
       assuranceGLI: 0,
       taxeFonciere: 0,
       teomRecuperee: false,
+      teomMontant: 0,
       fraisGestionAgence: 0,
       fraisGestionDirect: 0,
       fraisGestionDirectNbLocaux: 1,
@@ -190,3 +191,33 @@ export const initialState: TaxState = {
     passifDeductible: 0,
   },
 };
+
+// ── Restauration d'un état sauvegardé ───────────────────────
+// Fusionne un état lu dans le localStorage avec l'état initial : les champs
+// ajoutés depuis la sauvegarde prennent leur valeur par défaut et les valeurs
+// d'un type inattendu sont ignorées, au lieu de faire planter les calculs.
+function fusionner<T>(defaut: T, valeur: unknown): T {
+  if (Array.isArray(defaut)) {
+    return (Array.isArray(valeur) ? valeur : defaut) as T;
+  }
+  if (defaut !== null && typeof defaut === 'object') {
+    const source = valeur !== null && typeof valeur === 'object' && !Array.isArray(valeur)
+      ? (valeur as Record<string, unknown>)
+      : {};
+    const resultat: Record<string, unknown> = {};
+    for (const [cle, d] of Object.entries(defaut as Record<string, unknown>)) {
+      resultat[cle] = fusionner(d, source[cle]);
+    }
+    return resultat as T;
+  }
+  if (defaut === null) {
+    return (typeof valeur === 'string' ? valeur : defaut) as T;
+  }
+  if (typeof valeur !== typeof defaut) return defaut;
+  if (typeof valeur === 'number' && !Number.isFinite(valeur)) return defaut;
+  return valeur as T;
+}
+
+export function hydraterEtat(sauvegarde: unknown): TaxState {
+  return fusionner(initialState, sauvegarde);
+}

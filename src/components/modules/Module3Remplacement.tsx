@@ -23,7 +23,7 @@ function PersonBlock({ qui, label, state, dispatch }: {
   const update = (changes: Partial<typeof d>) => {
     dispatch({ type: 'UPDATE_REMPLACEMENT', payload: { ...state.revenusRemplacement, [qui]: { ...d, ...changes } } });
   };
-  const abattRetraite = Math.min(d.retraite * 0.10, 4321);
+  const abattRetraite = Math.min(d.retraite * 0.10, 4439);
 
   const getFractionRente = (age: number) => {
     if (age < 50) return 0.70;

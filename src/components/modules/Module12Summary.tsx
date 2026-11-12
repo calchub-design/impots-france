@@ -61,8 +61,9 @@ export function Module12Summary({ state, onGeneratePDF }: Props) {
     { label: '- Décote', value: calc.decote > 0 ? -calc.decote : null, indent: true },
     { label: '- Réductions d\'impôt', value: calc.reductionsTotal > 0 ? -calc.reductionsTotal : null, indent: true },
     { label: '- Crédits d\'impôt', value: calc.creditsTotal > 0 ? -calc.creditsTotal : null, indent: true },
-    { label: '+ Prélèvements sociaux (17,2%)', value: calc.prelevementsSociaux > 0 ? calc.prelevementsSociaux : null, indent: true },
-  ];
+    { label: '+ Prélèvement forfaitaire (PFU 12,8 %)', value: calc.impotForfaitaire > 0 ? calc.impotForfaitaire : null, indent: true },
+    { label: '+ Prélèvements sociaux', value: calc.prelevementsSociaux > 0 ? calc.prelevementsSociaux : null, indent: true },
+  ].filter(l => l.value !== null || l.label.startsWith('Nombre de parts'));
 
   return (
     <div>
@@ -117,9 +118,15 @@ export function Module12Summary({ state, onGeneratePDF }: Props) {
             </div>
           ))}
           <div className="flex justify-between font-bold text-lg border-t-2 border-blue-200 pt-3 mt-2">
-            <span className="text-blue-900">IMPÔT NET ESTIMÉ</span>
-            <span className="text-blue-900">{fmt(Math.max(0, calc.impotNet))}</span>
+            <span className="text-blue-900">{calc.impotNet < 0 ? 'RESTITUTION ESTIMÉE' : 'IMPÔT NET ESTIMÉ'}</span>
+            <span className={calc.impotNet < 0 ? 'text-green-700' : 'text-blue-900'}>{fmt(Math.abs(calc.impotNet))}</span>
           </div>
+          {calc.ifi > 0 && (
+            <div className="flex justify-between text-sm text-gray-700 pt-2">
+              <span>IFI estimé (calculé à part, formulaire 2042-IFI)</span>
+              <span>{fmt(calc.ifi)}</span>
+            </div>
+          )}
         </div>
         <div className="bg-red-50 border-t border-red-200 px-4 py-3 text-xs text-red-700">
           ⚠️ <strong>Estimation indicative</strong> — l'administration fiscale peut avoir des informations complémentaires.
